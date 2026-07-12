@@ -196,6 +196,58 @@ def practice(
     typer.echo(f"→ {out}")
 
 
+@app.command()
+def verify(
+    song_dir: Path = typer.Argument(help="Song directory containing song.yaml and tab.txt"),
+    bars: str = typer.Option(None, help="Bar range to verify, e.g. 11-12"),
+    stem: str = typer.Option("bass", help="照合するステム"),
+    track: bool = typer.Option(False, help="16分グリッドごとの実測ピッチを表示 (調査用)"),
+) -> None:
+    """転記と分離音源を照合する (音源が真実、TABは仮説)。要 ffmpeg。"""
+    from . import verify as verifymod  # numpy を使うので遅延import
+
+    song = load_song(song_dir)
+    lo, hi = _parse_bar_range(bars)
+    events = [e for e in load_events(song_dir) if lo <= e.bar <= hi]
+    x = verifymod.load_stem(song_dir, stem)
+
+    if track:
+        if not bars:
+            typer.echo("--track には --bars を指定してください", err=True)
+            raise typer.Exit(1)
+        prev = None
+        for bar, step, hz in verifymod.track_grid(song, x, lo, hi):
+            label = "-" if hz is None else verifymod.hz_to_name(hz)
+            mark = "" if label == prev else "  ←"
+            typer.echo(f"bar {bar:3d} {analysis.position_label(step):>3} "
+                       f"{label:>5} {'' if hz is None else f'{hz:6.1f}Hz'}{mark}")
+            prev = label
+        return
+
+    checks = verifymod.check_events(song, events, x)
+    if not checks:
+        typer.echo("照合対象がありません")
+        raise typer.Exit(1)
+    from collections import Counter
+
+    counts = Counter(c.verdict for c in checks)
+    total = len(checks)
+    typer.echo(
+        f"照合 {total}音: " + "  ".join(
+            f"{k} {v} ({100 * v // total}%)" for k, v in counts.most_common())
+    )
+    bad = [c for c in checks if c.verdict in ("mismatch", "octave")]
+    if bad:
+        typer.echo("\n不一致:")
+    for c in bad:
+        got = "-" if c.measured_hz is None else (
+            f"{verifymod.hz_to_name(c.measured_hz)} {c.measured_hz:.1f}Hz")
+        typer.echo(
+            f"  bar {c.bar:3d} {analysis.position_label(c.step):>3} "
+            f"転記 {c.pos:4s} 実測 {got:14s} {c.cents:+5.0f}c  {c.verdict}"
+        )
+
+
 _TAB_STRINGS = ["G", "D", "A", "E", "B"]  # display order, top to bottom
 _CELL = 3  # characters per 16th-note column
 

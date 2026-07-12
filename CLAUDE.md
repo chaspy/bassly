@@ -33,7 +33,12 @@ uv run bassly tab data/songs/polaris --bars 5-12      # ASCII TAB (検証用)
 uv run bassly analyze data/songs/polaris --bars 29-32 # 度数+語彙タグ (根拠)
 uv run bassly sheet data/songs/polaris                # レベル2譜面 (output/level2.md)
 uv run bassly practice data/songs/polaris             # 練習ページ (output/practice.html)
+uv run bassly verify data/songs/polaris --bars 11-12  # 転記と音源の照合 (要ffmpeg)
+uv run bassly verify data/songs/polaris --bars 11-12 --track  # 16分ごとの実測ピッチ
 ```
+
+転記の信頼度: TAB原本は他人の耳コピ=仮説 (confidence 0.85相当)。音源が真実。
+不一致を見つけたら verify --track で実測 → tab.txt を修正 → ユーザーの耳で最終確認。
 
 現在のフェーズ: ドッグフーディング。ユーザーが practice.html とレベル2譜面で
 ポラリスを練習し、チャットで質問・フィードバック→改善を繰り返す。

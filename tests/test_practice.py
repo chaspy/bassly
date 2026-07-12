@@ -46,6 +46,9 @@ def test_lessons_linked_by_tags():
     payload = practice.build_payload(song, events, phrases, [])
     # フレーズが使う実ポジションが度数付きで入る (指板ハイライト用)
     assert payload["phrases"][0]["positions"] == [{"pos": "A3", "deg": "R"}]
+    # "notes" は📝メモ (文字列) のまま。ピアノロールは "roll" (配列) — 衝突禁止
+    assert isinstance(payload["phrases"][0]["notes"], str)
+    assert payload["phrases"][0]["roll"][0]["midi"] == 36  # A弦3f = C2
     # ルート (コードトーン) タグ -> chord-tones レッスンが just-in-time で付く
     assert "chord-tones" in payload["phrases"][0]["lessons"]
     assert "slash-chords" not in payload["phrases"][0]["lessons"]

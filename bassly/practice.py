@@ -60,7 +60,7 @@ def _lesson_for_tag(tag: str) -> str | None:
 # レッスン相互リンク (Scrapbox風): 本文中にこの別名が現れたらリンク化する
 LESSON_ALIASES = {
     "degrees": ["度数"],
-    "chord-tones": ["コードトーン"],
+    "chord-tones": ["コードトーン", "トライアド", "アルペジオ"],
     "pentatonic": [
         "メジャーペンタトニック", "マイナーペンタトニック",
         "ペンタトニック", "メジャーペンタ", "マイナーペンタ", "ペンタ",
@@ -69,6 +69,7 @@ LESSON_ALIASES = {
     "slash-chords": ["分数コード", "スラッシュコード"],
     "octaves": ["オクターブ"],
     "fourths-tuning": ["4度チューニング"],
+    "pedal": ["ペダルポイント", "ペダル"],
 }
 
 # just-in-case 派 (順番に学びたい人) 向けの推奨パス。UIの主役は just-in-time の
@@ -81,6 +82,7 @@ LESSON_ORDER = [
     "pentatonic",
     "chromatic-approach",
     "slash-chords",
+    "pedal",
 ]
 
 
@@ -165,6 +167,15 @@ def build_payload(
         bars = []
         slugs: list[str] = []
         positions: dict[str, list[str]] = {}  # "E2" -> degrees used there
+        notes = []  # ピアノロール用: フレーズ頭からの16分位置と音高
+        chords16 = [  # ピアノロールのコードレーン
+            {
+                "t": (c.bar - p.start_bar) * 16 + int((c.beat - 1) * 4),
+                "label": c.chord,
+            }
+            for c in song.chords
+            if p.start_bar <= c.bar <= p.end_bar
+        ]
         for bar in range(p.start_bar, p.end_bar + 1):
             rows = by_bar.get(bar, [])
             for a in rows:
@@ -172,7 +183,26 @@ def build_payload(
                     slug = _lesson_for_tag(t)
                     if slug and slug in lessons and slug not in slugs:
                         slugs.append(slug)
-                if not a.event.ghost and a.degree is not None:
+                t16 = (bar - p.start_bar) * 16 + a.event.step
+                if a.event.ghost:
+                    notes.append({"t": t16, "d": a.event.duration, "midi": None,
+                                  "deg": "x", "cls": "ghost"})
+                    continue
+                midi = theory.pitch_at(a.event.string, a.event.fret).midi
+                if a.is_chord_tone:
+                    cls = "ct"
+                elif "スケール外" in a.tags or any(
+                    t.startswith("半音アプローチ") for t in a.tags
+                ):
+                    cls = "out"
+                else:
+                    cls = "oth"
+                notes.append({
+                    "t": t16, "d": a.event.duration, "midi": midi,
+                    "deg": a.degree, "cls": cls,
+                    "pos": f"{a.event.string}{a.event.fret}",
+                })
+                if a.degree is not None:
                     pos = f"{a.event.string}{a.event.fret}"
                     degs = positions.setdefault(pos, [])
                     if a.degree not in degs:
@@ -202,6 +232,8 @@ def build_payload(
                     {"pos": pos, "deg": "/".join(degs)}
                     for pos, degs in positions.items()
                 ],
+                "roll": notes,  # ピアノロール用 (キー "notes" は📝メモで使用済み)
+                "chords16": chords16,
             }
         )
     return {
@@ -229,6 +261,9 @@ def build_payload(
             for s in stems
         ],
         "show_fretboard": user.show_fretboard,
+        "pcnames": [
+            theory.spell_pc(pc, song.key, song.notation) for pc in range(12)
+        ],
         "aliases": {
             slug: names for slug, names in LESSON_ALIASES.items() if slug in lessons
         },
@@ -351,7 +386,8 @@ _TEMPLATE = """<!DOCTYPE html>
     <button id="full">▶ 頭から通す</button>
     <button id="restart">⟲ フレーズ頭</button>
     <label style="margin-left:10px">ループ <input type="checkbox" id="loop" checked></label>
-    <label style="margin-left:10px">速度 <input type="range" id="rate" min="50" max="100" value="100" style="width:110px">
+    <span id="loopinfo" style="color:#9c9;font-size:12px"></span>
+    <label style="margin-left:10px">速度 <input type="range" id="rate" min="40" max="100" value="100" style="width:110px">
       <span id="ratev">100%</span></label>
     <span id="pos"></span><span id="chordnow"></span>
     <div style="margin-top:8px" id="stems"></div>
@@ -461,6 +497,12 @@ function syncUI(tOverride) {
   }
   document.querySelectorAll('[data-bar]').forEach(el =>
     el.classList.toggle('now', Number(el.dataset.bar) === bar));
+  const head = document.getElementById('rollhead');
+  if (head && rollT0 !== null) {
+    const x = ROLL_GUT + (t - rollT0) / (spb / 16) * ROLL_CELL;
+    head.setAttribute('x1', x);
+    head.setAttribute('x2', x);
+  }
   // 進行の視覚化: いまのコードのベース音を指板上でハイライト
   let active = null;
   for (const c of chordEvents) { if (c.t <= t + 0.06) active = c; else break; }
@@ -484,6 +526,14 @@ clock.addEventListener('timeupdate', () => {
 function seekBar(bar) {
   // クリックは「見る」操作: シークと表示の切替だけ行い、再生は始めない
   seek(barTime(bar));
+}
+
+function loopBar(bar) {
+  // ダブルクリック: その1小節だけを回す (難所の耳コピ用)
+  loopStart = barTime(bar);
+  loopEnd = barTime(bar + 1);
+  document.getElementById('loopinfo').textContent = `🔁 bar ${bar} だけ`;
+  seek(loopStart);
 }
 
 const list = document.getElementById('phraselist');
@@ -513,7 +563,8 @@ function showDetail(i) {
   card.scrollIntoView({block: 'nearest'});
   const cells = p.bars.map(b =>
     `<span class="barcell ${b.warn ? 'warn' : ''}" data-bar="${b.bar}"
-       onclick="seekBar(${b.bar})" title="この小節へジャンプ">
+       onclick="seekBar(${b.bar})" ondblclick="loopBar(${b.bar})"
+       title="クリック=ジャンプ / ダブルクリック=この小節だけループ">
        <i>${b.bar}</i><b>${b.chord}</b></span>`
   ).join('');
   const hint = p.bars.map(b =>
@@ -522,15 +573,21 @@ function showDetail(i) {
   const chips = p.lessons.map(s =>
     `<span class="lchip" onclick="showLesson('${s}')">📚 ${D.lessons[s].title.split(' — ')[0]}</span>`
   ).join('');
+  const roll = buildRoll(p);
   document.getElementById('detail').innerHTML = `
     <h2 style="font-size:15px;color:#9c9">${p.section} ${p.start}–${p.end}小節
       「${p.role}」 ${p.badge} ${p.memorization}</h2>
     <div class="summary">${linkify(p.summary, null)}</div>
     ${p.notes ? `<div class="notes">📝 ${linkify(p.notes, null)}</div>` : ''}
     <div class="bars">${cells}</div>
+    ${roll ? `<details open style="margin-top:10px"><summary style="color:#888;font-size:12px;cursor:pointer">🎹 音の上下（クリックでその位置へ）</summary><div style="overflow-x:auto;margin-top:6px">${roll}</div></details>` : ''}
     <details><summary>ヒント（度数列）— 思い出せない時だけ開く</summary>
       <table>${hint}</table></details>
     ${chips ? `<div>${chips}</div>` : ''}`;
+  rollT0 = barTime(p.start);
+  const svg = document.getElementById('rollsvg');
+  if (svg) svg.onclick = ev =>
+    seek(rollT0 + Math.max(0, ev.offsetX - ROLL_GUT) / ROLL_CELL * spb / 16);
   // このフレーズが実際に使うポジションを指板マップにハイライト
   document.querySelectorAll('.note.phrase').forEach(n => {
     n.classList.remove('phrase');
@@ -568,6 +625,52 @@ Object.keys(D.lessons || {}).forEach(slug => {
     .filter(([, l]) => (D.aliases[slug] || []).some(a => l.body.includes(a)))
     .map(([other]) => other);
 });
+
+// ピアノロール: 音の上下 (輪郭) を見る。緑=コードトーン、青=スケール内、
+// 橙=半音アプローチ/スケール外、x=ゴースト
+const ROLL_CELL = 11, ROLL_SEMI = 9, ROLL_GUT = 36, ROLL_TOP = 30;
+let rollT0 = null;
+function buildRoll(p) {
+  const pitched = (p.roll || []).filter(n => n.midi !== null);
+  if (!pitched.length) return '';
+  const totalCells = (p.end - p.start + 1) * 16;
+  const hi = Math.max(...pitched.map(n => n.midi)) + 1;
+  const lo = Math.min(...pitched.map(n => n.midi)) - 1;
+  const H = (hi - lo + 1) * ROLL_SEMI + ROLL_TOP + 6;
+  const W = ROLL_GUT + totalCells * ROLL_CELL;
+  const rowY = m => (hi - m) * ROLL_SEMI + ROLL_TOP;
+  let s = `<svg id="rollsvg" width="${W}" height="${H}" style="background:#0d0d12;border:1px solid #223;border-radius:8px;cursor:pointer">`;
+  // 縦軸: 音名 (行ごと)
+  for (let m = lo; m <= hi; m++) {
+    const name = D.pcnames[((m % 12) + 12) % 12];
+    s += `<text x="${ROLL_GUT-4}" y="${rowY(m)+ROLL_SEMI-2}" fill="#556" font-size="8" text-anchor="end">${name}${Math.floor(m/12)-1}</text>`;
+    s += `<line x1="${ROLL_GUT}" y1="${rowY(m)+ROLL_SEMI}" x2="${W}" y2="${rowY(m)+ROLL_SEMI}" stroke="#14141c"/>`;
+  }
+  for (let c = 0; c <= totalCells; c += 4) {
+    const major = c % 16 === 0;
+    const x = ROLL_GUT + c * ROLL_CELL;
+    s += `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="${major ? '#334' : '#1a1f2a'}"/>`;
+    if (major && c < totalCells)
+      s += `<text x="${x+3}" y="11" fill="#667" font-size="10">${p.start + c/16}</text>`;
+  }
+  // コードレーン
+  (p.chords16 || []).forEach(c => {
+    s += `<text x="${ROLL_GUT + c.t*ROLL_CELL + 3}" y="${ROLL_TOP-6}" fill="#fc8" font-size="11" font-weight="bold">${c.label}</text>`;
+  });
+  const colors = {ct: '#2a9d6a', oth: '#4a6fa5', out: '#c77d1a'};
+  p.roll.forEach(n => {
+    if (n.midi === null) {
+      s += `<text x="${ROLL_GUT + n.t*ROLL_CELL + 2}" y="${H-5}" fill="#667" font-size="10">x</text>`;
+      return;
+    }
+    const y = rowY(n.midi);
+    const w = Math.max(n.d * ROLL_CELL - 2, ROLL_CELL - 3);
+    s += `<rect x="${ROLL_GUT + n.t*ROLL_CELL}" y="${y}" width="${w}" height="${ROLL_SEMI-1}" rx="3" fill="${colors[n.cls]}"/>`;
+    s += `<text x="${ROLL_GUT + n.t*ROLL_CELL + 3}" y="${y+ROLL_SEMI-2}" fill="#eef" font-size="8">${n.deg}</text>`;
+  });
+  s += `<line id="rollhead" x1="${ROLL_GUT}" y1="0" x2="${ROLL_GUT}" y2="${H}" stroke="#e55" stroke-width="1.5"/></svg>`;
+  return s;
+}
 
 function showLesson(slug) {
   const l = D.lessons[slug];
@@ -608,6 +711,7 @@ function select(i) {
   const p = D.phrases[i];
   loopStart = barTime(p.start);
   loopEnd = barTime(p.end + 1);
+  document.getElementById('loopinfo').textContent = `🔁 ${p.start}–${p.end}`;
   seek(loopStart);  // 再生はスペース or ▶ で明示的に
 }
 
