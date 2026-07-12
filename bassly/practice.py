@@ -66,7 +66,7 @@ LESSON_ALIASES = {
         "ペンタトニック", "メジャーペンタ", "マイナーペンタ", "ペンタ",
     ],
     "chromatic-approach": ["半音アプローチ", "先取り", "経過音", "アンティシペーション"],
-    "slash-chords": ["分数コード", "スラッシュコード"],
+    "slash-chords": ["分数コード", "スラッシュコード", "オンコード"],
     "octaves": ["オクターブ"],
     "fourths-tuning": ["4度チューニング"],
     "pedal": ["ペダルポイント", "ペダル"],
@@ -353,7 +353,7 @@ def build_payload(
             name = target_name(c.chord)
             if name is None or name == prev:
                 continue
-            segments.append(name if c.beat == 1.0 else f"({c.beat:g}){name}")
+            segments.append(name if c.beat == 1.0 else f"{c.beat:g}拍→{name}")
             prev = name
         chart.append(
             {
@@ -838,7 +838,10 @@ D.chart.forEach(c => {
 });
 if (chartGridOpen) chartHtml += '</div>';
 document.getElementById('chart').innerHTML =
-  '<span id="chartclose" onclick="toggleChart()">✕ 閉じる (Esc)</span>' + chartHtml;
+  '<span id="chartclose" onclick="toggleChart()">✕ 閉じる (Esc)</span>' +
+  '<div class="notes" style="margin:2px 0 6px">読み方: 大きい字 = 踏む音。' +
+  '「B 4拍→Bb」= 1〜3拍はB、4拍目からBb。小さい字 = 元のコード名。薄いマス = ベース休み</div>' +
+  chartHtml;
 function toggleChart() { document.getElementById('chart').classList.toggle('on'); }
 document.getElementById('chartbtn').onclick = toggleChart;
 
