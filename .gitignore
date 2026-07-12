@@ -1,0 +1,9 @@
+# User-local song data: copyrighted TABs, audio, and derived transcriptions
+# stay out of the repository. Only self-made samples go in examples/.
+data/
+
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+dist/

@@ -1,0 +1,22 @@
+[project]
+name = "bassly"
+version = "0.1.0"
+description = "Translate bass TABs into musical vocabulary for understanding-based practice"
+requires-python = ">=3.12"
+dependencies = [
+    "typer>=0.12",
+    "pydantic>=2.7",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+]
+
+[project.scripts]
+bassly = "bassly.cli:app"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
