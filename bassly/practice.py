@@ -86,6 +86,16 @@ LESSON_ORDER = [
 ]
 
 
+def load_strategy(song_dir: Path) -> dict | None:
+    """コーチの作戦 (analysis/strategy.yaml)。ユーザーが自由に編集できる。"""
+    import yaml
+
+    path = song_dir / "analysis" / "strategy.yaml"
+    if not path.exists():
+        return None
+    return yaml.safe_load(path.read_text(encoding="utf-8")) or None
+
+
 def load_lessons() -> dict[str, dict]:
     lessons_dir = Path(__file__).resolve().parent.parent / "lessons"
     lessons: dict[str, dict] = {}
@@ -152,6 +162,7 @@ def build_payload(
     phrases: list[Phrase],
     stems: list[str],
     user: UserProfile | None = None,
+    strategy: dict | None = None,
 ) -> dict:
     user = user or UserProfile()
     results = analysis.analyze(song, events)
@@ -236,6 +247,33 @@ def build_payload(
                 "chords16": chords16,
             }
         )
+    respell = lambda t: theory.respell_text(t, song.key, song.notation)  # noqa: E731
+    if strategy:
+        strategy = dict(strategy)
+        strategy["characteristics"] = [
+            respell(c) for c in strategy.get("characteristics", [])
+        ]
+        for s in strategy.get("steps", []):
+            s["name"] = respell(s.get("name", ""))
+            s["how"] = respell(s.get("how", ""))
+        strategy["principles"] = [respell(p) for p in strategy.get("principles", [])]
+
+    # 作戦ブロックに添えるデータ由来の事実
+    cats = {"ルートのみ": 0, "コードトーン": 0, "語彙内": 0, "要注意": 0}
+    for rows in by_bar.values():
+        c = analysis.bar_category(rows)
+        if c in cats:
+            cats[c] += 1
+    stats = {
+        "bars": len(by_bar),
+        "cats": cats,
+        "red": [
+            f"{p['start']}–{p['end']}"
+            for p in phrase_dicts
+            if p["memorization"] == "完全暗記"
+        ],
+    }
+
     # 情報圧縮: 同型フレーズの自動検出。「≒13–20と同型 (違い: 54小節)」なら
     # 差分だけ覚えればいい。曲中の全小節窓と照合し、小節同士はトークン単位の
     # あいまい一致 (方向マーク無視、70%以上一致で「同じ小節」とみなす)。
@@ -279,7 +317,11 @@ def build_payload(
                 "diffs": diffs,
             }
 
+    stats["likes"] = sum(1 for p in phrase_dicts if p.get("like"))
+
     return {
+        "strategy": strategy,
+        "stats": stats,
         "title": song.title,
         "artist": song.artist,
         "bpm": song.bpm,
@@ -416,6 +458,16 @@ _TEMPLATE = """<!DOCTYPE html>
   .wikilink { color:#8cf; cursor:pointer; border-bottom:1px dotted #468; }
   .backlinks { margin-top:12px; font-size:12px; color:#778; }
   .hint { color:#777; font-size:12px; margin-top:24px; line-height:1.8; }
+  #fret { position:fixed; bottom:0; left:294px; right:0; background:#0f0f0fee;
+          backdrop-filter:blur(4px); border-top:1px solid #333; margin:0;
+          padding:6px 18px 10px; z-index:4; max-height:45vh; overflow:auto; }
+  #fret summary { color:#8a8; font-size:12px; }
+  #strategy { margin:16px 0 4px; }
+  #strategy summary { color:#fc8; font-size:14px; cursor:pointer; font-weight:bold; }
+  .stbox { background:#141a14; border:1px solid #2a3a2a; border-radius:8px;
+           padding:12px 18px; font-size:13.5px; line-height:1.9; margin-top:8px; }
+  .stbox ul, .stbox ol { margin:6px 0 14px; padding-left:22px; }
+  .stbox li { margin:4px 0; }
 </style>
 </head>
 <body>
@@ -588,6 +640,7 @@ function buildRoll(p) {
   const H = (hi - lo + 1) * ROLL_SEMI + ROLL_TOP + 6;
   const rowY = m => (hi - m) * ROLL_SEMI + ROLL_TOP;
   const colors = {ct: '#2a9d6a', oth: '#4a6fa5', out: '#c77d1a'};
+  const used = new Set(pitched.map(n => n.midi));  // 実際に踏む音のレーン
   const nSys = Math.ceil((p.end - p.start + 1) / SYS_BARS);
   let out = '';
   for (let sys = 0; sys < nSys; sys++) {
@@ -599,7 +652,9 @@ function buildRoll(p) {
     let s = `<svg class="rollsvg" data-t0cell="${t0cell}" data-cells="${cells}" width="${W}" height="${H}" style="display:block;margin-bottom:4px;background:#0d0d12;border:1px solid #223;border-radius:8px;cursor:pointer">`;
     for (let m = lo; m <= hi; m++) {
       const name = D.pcnames[((m % 12) + 12) % 12];
-      s += `<text x="${ROLL_GUT-4}" y="${rowY(m)+ROLL_SEMI-2}" fill="#556" font-size="8" text-anchor="end">${name}${Math.floor(m/12)-1}</text>`;
+      if (used.has(m))
+        s += `<rect x="${ROLL_GUT}" y="${rowY(m)}" width="${W-ROLL_GUT}" height="${ROLL_SEMI}" fill="#1b2334"/>`;
+      s += `<text x="${ROLL_GUT-4}" y="${rowY(m)+ROLL_SEMI-2}" fill="${used.has(m) ? '#9ac' : '#445'}" font-size="8" text-anchor="end">${name}${Math.floor(m/12)-1}</text>`;
       s += `<line x1="${ROLL_GUT}" y1="${rowY(m)+ROLL_SEMI}" x2="${W}" y2="${rowY(m)+ROLL_SEMI}" stroke="#14141c"/>`;
     }
     for (let c = 0; c <= cells; c += 4) {
@@ -632,6 +687,35 @@ function buildRoll(p) {
 // --- スコア: 全フレーズを縦一列に (全体が見える) ----------------------------
 const list = document.getElementById('phraselist');
 let scoreHtml = '';
+// 🎯 作戦: コーチの提案 (analysis/strategy.yaml) + データ由来の事実
+if (D.strategy) {
+  const st = D.strategy;
+  const chip = b => {
+    const i = D.phrases.findIndex(p => p.start === b);
+    return i >= 0
+      ? ` <span class="lchip" onclick="select(${i})">▶ ${D.phrases[i].start}–${D.phrases[i].end}</span>`
+      : '';
+  };
+  const steps = (st.steps || []).map(s =>
+    `<li><b>${s.when ? s.when + '： ' : ''}${s.name}</b> — ${linkify(s.how || '', null)}${(s.phrases || []).map(chip).join('')}</li>`
+  ).join('');
+  const stats = D.stats
+    ? `<div class="notes">データの裏付け: 演奏${D.stats.bars}小節のうち ` +
+      `ルートのみ${D.stats.cats['ルートのみ']} ・ コードトーン${D.stats.cats['コードトーン']} ・ ` +
+      `語彙で説明可能${D.stats.cats['語彙内']} ・ 要注意${D.stats.cats['要注意']}。` +
+      `🔴完全暗記は ${D.stats.red.join('、')} だけ。同型検出 ${D.stats.likes} 組</div>`
+    : '';
+  scoreHtml += `<details id="strategy" open><summary>🎯 作戦 — ${st.title || ''}</summary>
+    <div class="stbox">
+      <b>この曲のベースの特徴</b>
+      <ul>${(st.characteristics || []).map(c => `<li>${linkify(c, null)}</li>`).join('')}</ul>
+      <b>練習の順番</b>
+      <ol>${steps}</ol>
+      <div class="notes">原則: ${(st.principles || []).join(' ／ ')}</div>
+      ${stats}
+      <div class="notes">✏️ この作戦は analysis/strategy.yaml で編集できます</div>
+    </div></details>`;
+}
 let lastSection = null;
 D.phrases.forEach((p, i) => {
   if (p.section !== lastSection) {

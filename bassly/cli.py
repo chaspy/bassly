@@ -187,7 +187,8 @@ def practice(
     if not stems:
         typer.echo("audio/ にステムが見つかりません", err=True)
     payload = practicemod.build_payload(
-        song, events, phrases, stems, user=load_user(song_dir)
+        song, events, phrases, stems, user=load_user(song_dir),
+        strategy=practicemod.load_strategy(song_dir),
     )
     html = practicemod.render(payload)
     out = out or song_dir / "output" / "practice.html"
