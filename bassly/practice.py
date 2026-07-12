@@ -236,6 +236,49 @@ def build_payload(
                 "chords16": chords16,
             }
         )
+    # 情報圧縮: 同型フレーズの自動検出。「≒13–20と同型 (違い: 54小節)」なら
+    # 差分だけ覚えればいい。曲中の全小節窓と照合し、小節同士はトークン単位の
+    # あいまい一致 (方向マーク無視、70%以上一致で「同じ小節」とみなす)。
+    def bar_tokens(bar: int) -> list[str]:
+        rows = by_bar.get(bar, [])
+        line = analysis.bar_degree_line(rows) if rows else ""
+        return line.replace("↓", "").replace("↑", "").split()
+
+    def bars_alike(a: int, b: int) -> bool | None:
+        ta, tb = bar_tokens(a), bar_tokens(b)
+        if not ta and not tb:
+            return None  # 両方休み: 判定対象外
+        n = max(len(ta), len(tb))
+        same = sum(1 for k in range(n)
+                   if k < len(ta) and k < len(tb) and ta[k] == tb[k])
+        return same / n >= 0.7
+
+    for pd in phrase_dicts:
+        length = pd["end"] - pd["start"]
+        best = None
+        for w in range(1, pd["start"] - length):  # 完全に手前の窓のみ
+            same, total, diffs = 0, 0, []
+            for off in range(length + 1):
+                alike = bars_alike(pd["start"] + off, w + off)
+                if alike is None:
+                    continue
+                total += 1
+                if alike:
+                    same += 1
+                else:
+                    diffs.append(pd["start"] + off)
+            if total >= 2 and same / total >= 0.6:
+                cand = (same / total, w, diffs)
+                if best is None or cand[0] > best[0]:
+                    best = cand
+        if best:
+            ratio, w, diffs = best
+            pd["like"] = {
+                "ref": f"{w}–{w + length}",
+                "ratio": round(ratio, 2),
+                "diffs": diffs,
+            }
+
     return {
         "title": song.title,
         "artist": song.artist,
@@ -311,37 +354,42 @@ _TEMPLATE = """<!DOCTYPE html>
   :root { color-scheme: dark; }
   body { background:#111; color:#eee; font-family:-apple-system,'Hiragino Sans',sans-serif;
          margin:0; display:flex; height:100vh; }
-  #side { width:290px; overflow-y:auto; border-right:1px solid #333; padding:12px; flex-shrink:0; }
-  #main { flex:1; overflow-y:auto; padding:20px 28px; }
-  h1 { font-size:16px; margin:4px 0 12px; }
+  #side { width:270px; overflow-y:auto; border-right:1px solid #333; padding:12px; flex-shrink:0; }
+  #main { flex:1; overflow-y:auto; padding:0 28px 40vh; }
+  h1 { font-size:15px; margin:4px 0 10px; }
   .sec { color:#8a8; font-size:12px; margin:14px 0 4px; font-weight:bold; }
-  .card { padding:8px 10px; border-radius:8px; cursor:pointer; margin:3px 0;
-          border:1px solid #333; font-size:13px; }
+  .card { padding:7px 10px; border-radius:8px; cursor:pointer; margin:3px 0;
+          border:1px solid #333; font-size:12.5px; }
   .card:hover { background:#1e2a1e; }
   .card.active { background:#1d3a26; border-color:#3c8; }
-  #transport { position:sticky; top:0; background:#111; padding:10px 0 14px; z-index:2;
-               border-bottom:1px solid #333; margin-bottom:16px; }
+  #transport { position:sticky; top:0; background:#111e; backdrop-filter:blur(4px);
+               padding:10px 0 10px; z-index:2; border-bottom:1px solid #333; }
   button { background:#2a2a2a; color:#eee; border:1px solid #444; border-radius:8px;
-           padding:8px 16px; font-size:15px; cursor:pointer; }
-  button.primary { background:#1d3a26; border-color:#3c8; font-size:18px; padding:8px 26px; }
-  .stem { display:inline-block; margin:2px 4px 2px 0; padding:4px 10px; border-radius:14px;
-          border:1px solid #444; cursor:pointer; font-size:12px; user-select:none; }
+           padding:7px 14px; font-size:14px; cursor:pointer; }
+  button.primary { background:#1d3a26; border-color:#3c8; font-size:17px; padding:7px 24px; }
+  .stem { display:inline-block; margin:2px 4px 0 0; padding:3px 9px; border-radius:14px;
+          border:1px solid #444; cursor:pointer; font-size:11.5px; user-select:none; }
   .stem.on { background:#1d3a26; border-color:#3c8; }
-  #pos { font-variant-numeric:tabular-nums; color:#9c9; margin-left:12px; font-size:14px; }
+  #pos { font-variant-numeric:tabular-nums; color:#9c9; margin-left:10px; font-size:13px; }
+  #chordnow { color:#fc8; font-size:16px; font-weight:bold; margin-left:10px; }
+  #loopinfo { color:#9c9; font-size:12px; margin-left:6px; }
   input[type=range] { vertical-align:middle; }
-  .summary { font-size:16px; line-height:1.7; background:#1a1a1a; border-left:4px solid #3c8;
-             padding:12px 16px; border-radius:6px; margin:10px 0; }
-  .notes { color:#bba; font-size:13px; margin:6px 0; }
-  .bars { display:flex; flex-wrap:wrap; gap:6px; margin-top:14px; }
-  .barcell { border:1px solid #333; border-radius:8px; padding:6px 12px; min-width:64px;
-             cursor:pointer; }
-  .barcell:hover { border-color:#6cf; }
-  .barcell i { display:block; font-style:normal; color:#666; font-size:10px; }
-  .barcell b { font-size:17px; font-weight:600; color:#cde; }
-  .barcell.now { background:#20301f; border-color:#3c8; }
-  .barcell.warn b::after { content:" ⚠"; font-size:12px; }
-  details { margin-top:14px; color:#888; }
+  .sec2 { color:#8a8; font-weight:bold; margin:30px 0 4px; font-size:16px;
+          border-top:1px solid #2a2a2a; padding-top:16px; }
+  .phrase { margin:14px 0 24px; padding-left:10px; margin-left:-13px;
+            border-left:3px solid transparent; scroll-margin-top:110px; }
+  .phrase.active { border-left-color:#3c8; }
+  .phead { cursor:pointer; color:#9c9; font-size:14px; margin-bottom:6px; }
+  .phead:hover { color:#cfc; }
+  .like { color:#fc8; font-size:12px; margin-left:8px; }
+  .summary { font-size:15px; line-height:1.7; background:#1a1a1a; border-left:4px solid #3c8;
+             padding:10px 14px; border-radius:6px; margin:8px 0; }
+  .notes { color:#bba; font-size:12.5px; margin:6px 0; }
+  details { margin-top:8px; color:#888; }
   details summary { cursor:pointer; font-size:12px; }
+  table { border-collapse:collapse; margin-top:8px; }
+  td { padding:4px 12px 4px 0; font-size:13px; vertical-align:top; color:#999; }
+  td.line { font-family:ui-monospace,'SF Mono',monospace; letter-spacing:1px; }
   .fb { border-collapse:collapse; margin-top:10px; }
   .fb th { color:#666; font-size:10px; padding:2px 4px; font-weight:normal; }
   .fb th.mark { color:#bbb; font-weight:bold; }
@@ -355,21 +403,18 @@ _TEMPLATE = """<!DOCTYPE html>
   .note.off { visibility:hidden; }
   .note.off.chord, .note.off.phrase { visibility:visible; opacity:.95; }
   .note.phrase { outline:2px solid #6cf; box-shadow:0 0 6px #6cf6; }
-  #chordnow { color:#fc8; font-size:16px; font-weight:bold; margin-left:12px; }
-  .lchip { display:inline-block; margin:10px 6px 0 0; padding:4px 12px; border-radius:14px;
+  .lchip { display:inline-block; margin:8px 6px 0 0; padding:3px 11px; border-radius:14px;
            border:1px solid #557; color:#aac; cursor:pointer; font-size:12px; user-select:none; }
   .lchip:hover { background:#1e2233; }
-  #lessonbox { display:none; margin-top:14px; background:#161a24; border:1px solid #334;
-               border-radius:8px; padding:16px 20px; }
+  #lessonbox { display:none; position:sticky; top:96px; z-index:3; margin-top:12px;
+               background:#161a24; border:1px solid #446; border-radius:8px; padding:14px 18px;
+               max-height:55vh; overflow-y:auto; box-shadow:0 8px 30px #000a; }
   #lessonbox h3 { margin:0 0 10px; font-size:15px; color:#aac; }
   #lessonbox pre { white-space:pre-wrap; font-family:inherit; font-size:13.5px;
                    line-height:1.8; color:#ccd; margin:0; }
   #lessonclose { float:right; cursor:pointer; color:#667; }
   .wikilink { color:#8cf; cursor:pointer; border-bottom:1px dotted #468; }
   .backlinks { margin-top:12px; font-size:12px; color:#778; }
-  table { border-collapse:collapse; margin-top:8px; }
-  td { padding:4px 12px 4px 0; font-size:13px; vertical-align:top; color:#999; }
-  td.line { font-family:ui-monospace,'SF Mono',monospace; letter-spacing:1px; }
   .hint { color:#777; font-size:12px; margin-top:24px; line-height:1.8; }
 </style>
 </head>
@@ -384,19 +429,18 @@ _TEMPLATE = """<!DOCTYPE html>
   <div id="transport">
     <button class="primary" id="play">▶</button>
     <button id="full">▶ 頭から通す</button>
-    <button id="restart">⟲ フレーズ頭</button>
-    <label style="margin-left:10px">ループ <input type="checkbox" id="loop" checked></label>
-    <span id="loopinfo" style="color:#9c9;font-size:12px"></span>
-    <label style="margin-left:10px">速度 <input type="range" id="rate" min="40" max="100" value="100" style="width:110px">
+    <label style="margin-left:8px">ループ <input type="checkbox" id="loop" checked></label>
+    <span id="loopinfo"></span>
+    <label style="margin-left:8px">速度 <input type="range" id="rate" min="40" max="100" value="100" style="width:100px">
       <span id="ratev">100%</span></label>
     <span id="pos"></span><span id="chordnow"></span>
-    <div style="margin-top:8px" id="stems"></div>
+    <div style="margin-top:6px" id="stems"></div>
   </div>
-  <div id="detail"><p style="color:#888">左のフレーズを選ぶと、その区間だけループ再生されます。</p></div>
   <div id="lessonbox"><span id="lessonclose" onclick="hideLesson()">✕ 閉じる</span>
     <h3 id="lessontitle"></h3><pre id="lessonbody"></pre>
     <div class="backlinks" id="lessonlinks"></div></div>
-  <details id="fret" open>
+  <div id="score"></div>
+  <details id="fret">
     <summary id="fretsum">指板マップ</summary>
     <div style="margin-top:8px">
       表示:
@@ -408,15 +452,16 @@ _TEMPLATE = """<!DOCTYPE html>
     <div class="hint" id="frethint"></div>
   </details>
   <div class="hint">
-    スペース=再生/停止 ・ ←→=フレーズ移動 ・ 「頭から通す」=解釈が再生に追従。<br>
-    ベースを消すとカラオケ練習、ベースだけにすると耳コピ確認。<br>
-    説明が分からない・言葉がしっくりこない時は、そのフレーズ番号を添えてチャットで質問してください。
-    一文の修正は analysis/phrases.yaml へ。
+    スペース=再生/停止 ・ ←→=フレーズ移動 ・ フレーズ見出しクリック=そこをループ ・
+    ロールクリック=その位置へ ・ ロールをダブルクリック=その段(4小節)だけループ ・
+    「頭から通す」=再生に合わせて自動スクロール。<br>
+    説明が分からない時はフレーズ番号を添えてチャットへ。一文の修正は analysis/phrases.yaml へ。
   </div>
 </div>
 <script>
 const D = __DATA__;
 const spb = 60 / D.bpm * D.beats;
+const spb16 = spb / 16;
 const barTime = b => (b - 1) * spb;
 const fmt = t => `${Math.floor(t/60)}:${String(Math.floor(t%60)).padStart(2,'0')}`;
 
@@ -442,33 +487,29 @@ D.stems.forEach((s, i) => {
 
 let loopStart = 0, loopEnd = clockDuration();
 let current = -1;
-let follow = false;  // 通しモード: 再生位置に合わせて解釈を自動で切替
+let follow = false;  // 通しモード: 再生に合わせて自動スクロール
 function clockDuration() { return isFinite(clock.duration) ? clock.duration : 9999; }
 function phraseAt(bar) { return D.phrases.findIndex(p => bar >= p.start && bar <= p.end); }
 
+function playing() { return !clock.paused; }
+function playAll() { audios.forEach(a => a.play()); document.getElementById('play').textContent = '⏸'; }
+function pauseAll() { audios.forEach(a => a.pause()); document.getElementById('play').textContent = '▶'; }
+
 // m4aのシークはフレーム境界にスナップし数十ms手前に着地することがあるため、
-// UI更新には意図した時刻を直接渡す (音声の着地誤差でコード判定をずらさない)。
-// さらにシーク完了までは音声由来の時刻を信用しない (pendingSeek)
+// UI更新には意図した時刻を直接渡す。シーク完了までは音声由来の時刻を信用しない
 let pendingSeek = null;
 function seek(t) {
   pendingSeek = t;
   audios.forEach(a => a.currentTime = t);
   syncUI(t);
 }
-function playing() { return !clock.paused; }
-function playAll() { audios.forEach(a => a.play()); document.getElementById('play').textContent = '⏸'; }
-function pauseAll() { audios.forEach(a => a.pause()); document.getElementById('play').textContent = '▶'; }
 
 document.getElementById('play').onclick = () => playing() ? pauseAll() : playAll();
-document.getElementById('restart').onclick = () => seek(loopStart);
 document.getElementById('full').onclick = () => {
   follow = true;
   loopStart = 0;
   loopEnd = clockDuration();
-  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
-  document.getElementById('detail').innerHTML =
-    '<p style="color:#888">通し再生中 — 再生位置のフレーズを自動表示します。</p>';
-  current = -1;
+  document.getElementById('loopinfo').textContent = '🔁 通し';
   seek(0);
   playAll();
 };
@@ -478,128 +519,7 @@ document.getElementById('rate').oninput = e => {
   document.getElementById('ratev').textContent = e.target.value + '%';
 };
 
-const chordEvents = D.chords.map(c => ({
-  ...c, t: ((c.bar - 1) * D.beats + (c.beat - 1)) * 60 / D.bpm,
-}));
-let lastChord = null;
-
-function syncUI(tOverride) {
-  const t = typeof tOverride === 'number' ? tOverride : clock.currentTime;
-  if (t >= loopEnd - 0.03 && playing()) {
-    if (document.getElementById('loop').checked) { seek(loopStart); return; }
-    pauseAll();
-  }
-  const bar = Math.floor(t / spb) + 1;
-  document.getElementById('pos').textContent = `${fmt(t)} / bar ${bar}`;
-  if (follow) {
-    const i = phraseAt(bar);
-    if (i >= 0 && i !== current) showDetail(i);
-  }
-  document.querySelectorAll('[data-bar]').forEach(el =>
-    el.classList.toggle('now', Number(el.dataset.bar) === bar));
-  const head = document.getElementById('rollhead');
-  if (head && rollT0 !== null) {
-    const x = ROLL_GUT + (t - rollT0) / (spb / 16) * ROLL_CELL;
-    head.setAttribute('x1', x);
-    head.setAttribute('x2', x);
-  }
-  // 進行の視覚化: いまのコードのベース音を指板上でハイライト
-  let active = null;
-  for (const c of chordEvents) { if (c.t <= t + 0.06) active = c; else break; }
-  if (active !== lastChord) {
-    lastChord = active;
-    document.getElementById('chordnow').textContent = active ? active.label : '';
-    document.querySelectorAll('.note').forEach(n =>
-      n.classList.toggle('chord', active != null && active.pc !== null
-        && Number(n.dataset.pc) === active.pc));
-    if (fbMode === 'chord') relabelFretboard();
-  }
-}
-// 停止中は seek() が渡す意図時刻だけを信じる。シーク処理中に音声側から
-// 古い currentTime で timeupdate が飛んできて UI を上書きするのを防ぐ
-clock.addEventListener('seeked', () => { pendingSeek = null; });
-clock.addEventListener('timeupdate', () => {
-  if (pendingSeek !== null) return;
-  if (playing()) syncUI();
-});
-
-function seekBar(bar) {
-  // クリックは「見る」操作: シークと表示の切替だけ行い、再生は始めない
-  seek(barTime(bar));
-}
-
-function loopBar(bar) {
-  // ダブルクリック: その1小節だけを回す (難所の耳コピ用)
-  loopStart = barTime(bar);
-  loopEnd = barTime(bar + 1);
-  document.getElementById('loopinfo').textContent = `🔁 bar ${bar} だけ`;
-  seek(loopStart);
-}
-
-const list = document.getElementById('phraselist');
-let lastSection = null;
-D.phrases.forEach((p, i) => {
-  if (p.section !== lastSection) {
-    lastSection = p.section;
-    const s = document.createElement('div');
-    s.className = 'sec';
-    s.textContent = p.section;
-    list.appendChild(s);
-  }
-  const c = document.createElement('div');
-  c.className = 'card';
-  c.id = 'card' + i;
-  c.textContent = `${p.badge} ${p.start}–${p.end}  ${p.role || ''}`;
-  c.onclick = () => select(i);
-  list.appendChild(c);
-});
-
-function showDetail(i) {
-  current = i;
-  const p = D.phrases[i];
-  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
-  const card = document.getElementById('card' + i);
-  card.classList.add('active');
-  card.scrollIntoView({block: 'nearest'});
-  const cells = p.bars.map(b =>
-    `<span class="barcell ${b.warn ? 'warn' : ''}" data-bar="${b.bar}"
-       onclick="seekBar(${b.bar})" ondblclick="loopBar(${b.bar})"
-       title="クリック=ジャンプ / ダブルクリック=この小節だけループ">
-       <i>${b.bar}</i><b>${b.chord}</b></span>`
-  ).join('');
-  const hint = p.bars.map(b =>
-    `<tr><td>${b.bar}</td><td class="line">|${b.line}|</td></tr>`
-  ).join('');
-  const chips = p.lessons.map(s =>
-    `<span class="lchip" onclick="showLesson('${s}')">📚 ${D.lessons[s].title.split(' — ')[0]}</span>`
-  ).join('');
-  const roll = buildRoll(p);
-  document.getElementById('detail').innerHTML = `
-    <h2 style="font-size:15px;color:#9c9">${p.section} ${p.start}–${p.end}小節
-      「${p.role}」 ${p.badge} ${p.memorization}</h2>
-    <div class="summary">${linkify(p.summary, null)}</div>
-    ${p.notes ? `<div class="notes">📝 ${linkify(p.notes, null)}</div>` : ''}
-    <div class="bars">${cells}</div>
-    ${roll ? `<details open style="margin-top:10px"><summary style="color:#888;font-size:12px;cursor:pointer">🎹 音の上下（クリックでその位置へ）</summary><div style="overflow-x:auto;margin-top:6px">${roll}</div></details>` : ''}
-    <details><summary>ヒント（度数列）— 思い出せない時だけ開く</summary>
-      <table>${hint}</table></details>
-    ${chips ? `<div>${chips}</div>` : ''}`;
-  rollT0 = barTime(p.start);
-  const svg = document.getElementById('rollsvg');
-  if (svg) svg.onclick = ev =>
-    seek(rollT0 + Math.max(0, ev.offsetX - ROLL_GUT) / ROLL_CELL * spb / 16);
-  // このフレーズが実際に使うポジションを指板マップにハイライト
-  document.querySelectorAll('.note.phrase').forEach(n => {
-    n.classList.remove('phrase');
-    n.removeAttribute('title');
-  });
-  (p.positions || []).forEach(q => {
-    const n = document.querySelector(`.note[data-pos="${q.pos}"]`);
-    if (n) { n.classList.add('phrase'); n.title = q.deg; }
-  });
-}
-
-// Scrapbox風の相互リンク: 本文中の用語を他レッスンへのリンクにする
+// --- レッスン (Scrapbox風相互リンク) ---------------------------------------
 const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const aliasItems = Object.entries(D.aliases || {})
   .flatMap(([slug, names]) => names.map(a => [a, slug]))
@@ -626,52 +546,6 @@ Object.keys(D.lessons || {}).forEach(slug => {
     .map(([other]) => other);
 });
 
-// ピアノロール: 音の上下 (輪郭) を見る。緑=コードトーン、青=スケール内、
-// 橙=半音アプローチ/スケール外、x=ゴースト
-const ROLL_CELL = 11, ROLL_SEMI = 9, ROLL_GUT = 36, ROLL_TOP = 30;
-let rollT0 = null;
-function buildRoll(p) {
-  const pitched = (p.roll || []).filter(n => n.midi !== null);
-  if (!pitched.length) return '';
-  const totalCells = (p.end - p.start + 1) * 16;
-  const hi = Math.max(...pitched.map(n => n.midi)) + 1;
-  const lo = Math.min(...pitched.map(n => n.midi)) - 1;
-  const H = (hi - lo + 1) * ROLL_SEMI + ROLL_TOP + 6;
-  const W = ROLL_GUT + totalCells * ROLL_CELL;
-  const rowY = m => (hi - m) * ROLL_SEMI + ROLL_TOP;
-  let s = `<svg id="rollsvg" width="${W}" height="${H}" style="background:#0d0d12;border:1px solid #223;border-radius:8px;cursor:pointer">`;
-  // 縦軸: 音名 (行ごと)
-  for (let m = lo; m <= hi; m++) {
-    const name = D.pcnames[((m % 12) + 12) % 12];
-    s += `<text x="${ROLL_GUT-4}" y="${rowY(m)+ROLL_SEMI-2}" fill="#556" font-size="8" text-anchor="end">${name}${Math.floor(m/12)-1}</text>`;
-    s += `<line x1="${ROLL_GUT}" y1="${rowY(m)+ROLL_SEMI}" x2="${W}" y2="${rowY(m)+ROLL_SEMI}" stroke="#14141c"/>`;
-  }
-  for (let c = 0; c <= totalCells; c += 4) {
-    const major = c % 16 === 0;
-    const x = ROLL_GUT + c * ROLL_CELL;
-    s += `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="${major ? '#334' : '#1a1f2a'}"/>`;
-    if (major && c < totalCells)
-      s += `<text x="${x+3}" y="11" fill="#667" font-size="10">${p.start + c/16}</text>`;
-  }
-  // コードレーン
-  (p.chords16 || []).forEach(c => {
-    s += `<text x="${ROLL_GUT + c.t*ROLL_CELL + 3}" y="${ROLL_TOP-6}" fill="#fc8" font-size="11" font-weight="bold">${c.label}</text>`;
-  });
-  const colors = {ct: '#2a9d6a', oth: '#4a6fa5', out: '#c77d1a'};
-  p.roll.forEach(n => {
-    if (n.midi === null) {
-      s += `<text x="${ROLL_GUT + n.t*ROLL_CELL + 2}" y="${H-5}" fill="#667" font-size="10">x</text>`;
-      return;
-    }
-    const y = rowY(n.midi);
-    const w = Math.max(n.d * ROLL_CELL - 2, ROLL_CELL - 3);
-    s += `<rect x="${ROLL_GUT + n.t*ROLL_CELL}" y="${y}" width="${w}" height="${ROLL_SEMI-1}" rx="3" fill="${colors[n.cls]}"/>`;
-    s += `<text x="${ROLL_GUT + n.t*ROLL_CELL + 3}" y="${y+ROLL_SEMI-2}" fill="#eef" font-size="8">${n.deg}</text>`;
-  });
-  s += `<line id="rollhead" x1="${ROLL_GUT}" y1="0" x2="${ROLL_GUT}" y2="${H}" stroke="#e55" stroke-width="1.5"/></svg>`;
-  return s;
-}
-
 function showLesson(slug) {
   const l = D.lessons[slug];
   if (!l) return;
@@ -688,8 +562,6 @@ function showLesson(slug) {
 function hideLesson() {
   document.getElementById('lessonbox').style.display = 'none';
 }
-
-// just-in-case 派向け: 推奨順のレッスン一覧 (基礎 -> 応用)
 function showLessonIndex() {
   const items = (D.lesson_order || []).map((s, i) => {
     const parts = D.lessons[s].title.split(' — ');
@@ -705,16 +577,192 @@ function showLessonIndex() {
   document.getElementById('lessonbox').style.display = 'block';
 }
 
+// --- ピアノロール (4小節=1段の段組み、全曲縦積み) ---------------------------
+const ROLL_CELL = 11, ROLL_SEMI = 9, ROLL_GUT = 36, ROLL_TOP = 30;
+const SYS_BARS = 4, SYS_CELLS = SYS_BARS * 16;
+function buildRoll(p) {
+  const pitched = (p.roll || []).filter(n => n.midi !== null);
+  if (!pitched.length) return '';
+  const hi = Math.max(...pitched.map(n => n.midi)) + 1;
+  const lo = Math.min(...pitched.map(n => n.midi)) - 1;
+  const H = (hi - lo + 1) * ROLL_SEMI + ROLL_TOP + 6;
+  const rowY = m => (hi - m) * ROLL_SEMI + ROLL_TOP;
+  const colors = {ct: '#2a9d6a', oth: '#4a6fa5', out: '#c77d1a'};
+  const nSys = Math.ceil((p.end - p.start + 1) / SYS_BARS);
+  let out = '';
+  for (let sys = 0; sys < nSys; sys++) {
+    const cell0 = sys * SYS_CELLS;
+    const t0cell = (p.start - 1 + sys * SYS_BARS) * 16;  // 曲頭からの絶対16分位置
+    const barsHere = Math.min(SYS_BARS, p.end - p.start + 1 - sys * SYS_BARS);
+    const cells = barsHere * 16;
+    const W = ROLL_GUT + cells * ROLL_CELL;
+    let s = `<svg class="rollsvg" data-t0cell="${t0cell}" data-cells="${cells}" width="${W}" height="${H}" style="display:block;margin-bottom:4px;background:#0d0d12;border:1px solid #223;border-radius:8px;cursor:pointer">`;
+    for (let m = lo; m <= hi; m++) {
+      const name = D.pcnames[((m % 12) + 12) % 12];
+      s += `<text x="${ROLL_GUT-4}" y="${rowY(m)+ROLL_SEMI-2}" fill="#556" font-size="8" text-anchor="end">${name}${Math.floor(m/12)-1}</text>`;
+      s += `<line x1="${ROLL_GUT}" y1="${rowY(m)+ROLL_SEMI}" x2="${W}" y2="${rowY(m)+ROLL_SEMI}" stroke="#14141c"/>`;
+    }
+    for (let c = 0; c <= cells; c += 4) {
+      const major = c % 16 === 0;
+      const x = ROLL_GUT + c * ROLL_CELL;
+      s += `<line x1="${x}" y1="0" x2="${x}" y2="${H}" stroke="${major ? '#334' : '#1a1f2a'}"/>`;
+      if (major && c < cells)
+        s += `<text x="${x+3}" y="11" fill="#667" font-size="10">${p.start + sys*SYS_BARS + c/16}</text>`;
+    }
+    (p.chords16 || []).filter(c => c.t >= cell0 && c.t < cell0 + cells).forEach(c => {
+      s += `<text x="${ROLL_GUT + (c.t-cell0)*ROLL_CELL + 3}" y="${ROLL_TOP-6}" fill="#fc8" font-size="11" font-weight="bold">${c.label}</text>`;
+    });
+    p.roll.filter(n => n.t >= cell0 && n.t < cell0 + cells).forEach(n => {
+      const x = ROLL_GUT + (n.t - cell0) * ROLL_CELL;
+      if (n.midi === null) {
+        s += `<text x="${x+2}" y="${H-5}" fill="#667" font-size="10">x</text>`;
+        return;
+      }
+      const y = rowY(n.midi);
+      const w = Math.max(n.d * ROLL_CELL - 2, ROLL_CELL - 3);
+      s += `<rect x="${x}" y="${y}" width="${w}" height="${ROLL_SEMI-1}" rx="3" fill="${colors[n.cls]}"/>`;
+      s += `<text x="${x+3}" y="${y+ROLL_SEMI-2}" fill="#eef" font-size="8">${n.deg}</text>`;
+    });
+    s += `<line class="rollhead" x1="-10" y1="0" x2="-10" y2="${H}" stroke="#e55" stroke-width="1.5"/></svg>`;
+    out += s;
+  }
+  return out;
+}
+
+// --- スコア: 全フレーズを縦一列に (全体が見える) ----------------------------
+const list = document.getElementById('phraselist');
+let scoreHtml = '';
+let lastSection = null;
+D.phrases.forEach((p, i) => {
+  if (p.section !== lastSection) {
+    lastSection = p.section;
+    const s = document.createElement('div');
+    s.className = 'sec';
+    s.textContent = p.section;
+    list.appendChild(s);
+    scoreHtml += `<div class="sec2">${p.section}</div>`;
+  }
+  const c = document.createElement('div');
+  c.className = 'card';
+  c.id = 'card' + i;
+  c.textContent = `${p.badge} ${p.start}–${p.end}  ${p.role || ''}`;
+  c.onclick = () => select(i);
+  list.appendChild(c);
+
+  const like = p.like
+    ? `<span class="like">≒ ${p.like.ref} と同型${p.like.diffs.length ? ` (違い: ${p.like.diffs.join(',')})` : ''}</span>`
+    : '';
+  const hint = p.bars.map(b =>
+    `<tr><td>${b.bar}</td><td class="line">|${b.line}|</td></tr>`).join('');
+  const chips = p.lessons.map(s =>
+    `<span class="lchip" onclick="showLesson('${s}')">📚 ${D.lessons[s].title.split(' — ')[0]}</span>`
+  ).join('');
+  scoreHtml += `<div class="phrase" id="ph${i}">
+    <div class="phead" onclick="select(${i})">${p.badge} <b>${p.start}–${p.end}</b>
+      「${p.role}」 <span style="color:#667">${p.memorization} / ${fmt(barTime(p.start))}</span>${like}</div>
+    <div class="summary">${linkify(p.summary, null)}</div>
+    ${p.notes ? `<div class="notes">📝 ${linkify(p.notes, null)}</div>` : ''}
+    ${buildRoll(p)}
+    <details><summary>ヒント（度数列）— 思い出せない時だけ開く</summary><table>${hint}</table></details>
+    ${chips ? `<div>${chips}</div>` : ''}
+  </div>`;
+});
+document.getElementById('score').innerHTML = scoreHtml;
+
+document.querySelectorAll('.rollsvg').forEach(svg => {
+  const t0 = Number(svg.dataset.t0cell), cells = Number(svg.dataset.cells);
+  svg.onclick = ev =>
+    seek((t0 + Math.max(0, ev.offsetX - ROLL_GUT) / ROLL_CELL) * spb16);
+  svg.ondblclick = () => {
+    loopStart = t0 * spb16;
+    loopEnd = (t0 + cells) * spb16;
+    document.getElementById('loopinfo').textContent =
+      `🔁 bar ${t0/16 + 1}–${(t0 + cells)/16}`;
+    seek(loopStart);
+  };
+});
+
+function setActive(i) {
+  current = i;
+  document.querySelectorAll('.card').forEach(c => c.classList.remove('active'));
+  document.querySelectorAll('.phrase').forEach(c => c.classList.remove('active'));
+  const card = document.getElementById('card' + i);
+  const block = document.getElementById('ph' + i);
+  if (card) { card.classList.add('active'); card.scrollIntoView({block: 'nearest'}); }
+  if (block) block.classList.add('active');
+  const p = D.phrases[i];
+  document.querySelectorAll('.note.phrase').forEach(n => {
+    n.classList.remove('phrase');
+    n.removeAttribute('title');
+  });
+  (p.positions || []).forEach(q => {
+    const n = document.querySelector(`.note[data-pos="${q.pos}"]`);
+    if (n) { n.classList.add('phrase'); n.title = q.deg; }
+  });
+}
+
 function select(i) {
   follow = false;
-  showDetail(i);
+  setActive(i);
   const p = D.phrases[i];
   loopStart = barTime(p.start);
   loopEnd = barTime(p.end + 1);
   document.getElementById('loopinfo').textContent = `🔁 ${p.start}–${p.end}`;
-  seek(loopStart);  // 再生はスペース or ▶ で明示的に
+  seek(loopStart);
+  const block = document.getElementById('ph' + i);
+  if (block) block.scrollIntoView({block: 'start', behavior: 'smooth'});
 }
 
+// --- 再生同期 ----------------------------------------------------------------
+const chordEvents = D.chords.map(c => ({
+  ...c, t: ((c.bar - 1) * D.beats + (c.beat - 1)) * 60 / D.bpm,
+}));
+let lastChord = null;
+let lastScrollT0 = null;
+
+function syncUI(tOverride) {
+  const t = typeof tOverride === 'number' ? tOverride : clock.currentTime;
+  if (t >= loopEnd - 0.03 && playing()) {
+    if (document.getElementById('loop').checked) { seek(loopStart); return; }
+    pauseAll();
+  }
+  const bar = Math.floor(t / spb) + 1;
+  document.getElementById('pos').textContent = `${fmt(t)} / bar ${bar}`;
+  const pi = phraseAt(bar);
+  if (pi >= 0 && pi !== current) setActive(pi);
+  // ロールの再生線 (該当する段だけに表示) + 通しモードの自動スクロール
+  const rel = t / spb16;
+  document.querySelectorAll('.rollhead').forEach(head => {
+    const svg = head.parentElement;
+    const t0 = Number(svg.dataset.t0cell), cells = Number(svg.dataset.cells);
+    const local = rel - t0;
+    const visible = local >= 0 && local < cells;
+    head.setAttribute('x1', visible ? ROLL_GUT + local * ROLL_CELL : -10);
+    head.setAttribute('x2', visible ? ROLL_GUT + local * ROLL_CELL : -10);
+    if (visible && follow && playing() && lastScrollT0 !== t0) {
+      lastScrollT0 = t0;
+      svg.scrollIntoView({block: 'center', behavior: 'smooth'});
+    }
+  });
+  // いまのコードのベース音を指板上でハイライト
+  let active = null;
+  for (const c of chordEvents) { if (c.t <= t + 0.06) active = c; else break; }
+  if (active !== lastChord) {
+    lastChord = active;
+    document.getElementById('chordnow').textContent = active ? active.label : '';
+    document.querySelectorAll('.note').forEach(n =>
+      n.classList.toggle('chord', active != null && active.pc !== null
+        && Number(n.dataset.pc) === active.pc));
+    if (fbMode === 'chord') relabelFretboard();
+  }
+}
+clock.addEventListener('seeked', () => { pendingSeek = null; });
+clock.addEventListener('timeupdate', () => {
+  if (pendingSeek !== null) return;
+  if (playing()) syncUI();
+});
+
+// --- 指板マップ ----------------------------------------------------------------
 if (D.fretboard) {
   const fb = D.fretboard;
   const marks = new Set([3, 5, 7, 9, 12, 15]);
@@ -761,7 +809,7 @@ function relabelFretboard() {
 document.querySelectorAll('input[name=fbmode]').forEach(r =>
   r.onchange = () => { fbMode = r.value; relabelFretboard(); });
 if (D.fretboard) relabelFretboard();
-if (D.show_fretboard === false) document.getElementById('fret').removeAttribute('open');
+if (D.show_fretboard !== false) document.getElementById('fret').setAttribute('open', '');
 
 document.addEventListener('keydown', e => {
   if (e.code === 'Space' && e.target.tagName !== 'INPUT') {
