@@ -319,7 +319,26 @@ def build_payload(
 
     stats["likes"] = sum(1 for p in phrase_dicts if p.get("like"))
 
+    # ルート通しチャート: 全小節のコード (=踏むルート) を1枚に。休みも明示
+    last_bar = max(
+        [max_bar]
+        + [s.end_bar for s in song.sections]
+        + [c.bar for c in song.chords]
+    )
+    chart_labels = analysis.chords_by_bar(song.chords, 1, last_bar)
+    section_starts = {s.start_bar: s.name for s in song.sections}
+    chart = [
+        {
+            "bar": bar,
+            "label": chart_labels.get(bar, ""),
+            "rest": bar not in by_bar,
+            "sec": section_starts.get(bar),
+        }
+        for bar in range(1, last_bar + 1)
+    ]
+
     return {
+        "chart": chart,
         "strategy": strategy,
         "stats": stats,
         "title": song.title,
@@ -432,13 +451,13 @@ _TEMPLATE = """<!DOCTYPE html>
   table { border-collapse:collapse; margin-top:8px; }
   td { padding:4px 12px 4px 0; font-size:13px; vertical-align:top; color:#999; }
   td.line { font-family:ui-monospace,'SF Mono',monospace; letter-spacing:1px; }
-  .fb { border-collapse:collapse; margin-top:10px; }
-  .fb th { color:#666; font-size:10px; padding:2px 4px; font-weight:normal; }
+  .fb { border-collapse:collapse; margin-top:4px; }
+  .fb th { color:#666; font-size:9px; padding:1px 3px; font-weight:normal; }
   .fb th.mark { color:#bbb; font-weight:bold; }
-  .fb td { border-left:1px solid #2a2a2a; min-width:40px; height:26px;
-           text-align:center; padding:1px 2px; }
-  .note { display:inline-block; min-width:22px; padding:2px 4px; border-radius:10px;
-          font-size:11px; color:#8a8; border:1px solid #2a3a2a; }
+  .fb td { border-left:1px solid #2a2a2a; min-width:30px; height:19px;
+           text-align:center; padding:0 1px; }
+  .note { display:inline-block; min-width:17px; padding:1px 3px; border-radius:8px;
+          font-size:9.5px; color:#8a8; border:1px solid #2a3a2a; }
   .note.penta { color:#cec; border-color:#4a6; }
   .note.root { background:#1d3a26; border-color:#3c8; color:#dfd; font-weight:bold; }
   .note.chord { background:#4a3208; border-color:#fa0; color:#ffd; box-shadow:0 0 6px #fa06; }
@@ -460,8 +479,23 @@ _TEMPLATE = """<!DOCTYPE html>
   .hint { color:#777; font-size:12px; margin-top:24px; line-height:1.8; }
   #fret { position:fixed; bottom:0; left:294px; right:0; background:#0f0f0fee;
           backdrop-filter:blur(4px); border-top:1px solid #333; margin:0;
-          padding:6px 18px 10px; z-index:4; max-height:45vh; overflow:auto; }
-  #fret summary { color:#8a8; font-size:12px; }
+          padding:4px 14px 6px; z-index:4; max-height:34vh; overflow:auto; }
+  #fret summary { color:#8a8; font-size:11.5px; }
+  #fret label { font-size:11px; color:#999; }
+  #fret .hint { margin-top:4px; font-size:10.5px; line-height:1.5; }
+  #fret .lchip { font-size:10.5px; padding:1px 8px; margin-top:2px; }
+  #chart { display:none; position:fixed; top:0; left:294px; right:0; bottom:0;
+           background:#101014fa; z-index:5; overflow-y:auto; padding:16px 26px 40vh; }
+  #chart.on { display:block; }
+  #chartclose { float:right; cursor:pointer; color:#667; font-size:14px; padding:4px 10px; }
+  .chsec { color:#8a8; font-weight:bold; margin:16px 0 5px; font-size:14px; }
+  .chgrid { display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; }
+  .chcell { border:1px solid #333; border-radius:6px; padding:5px 3px 7px; text-align:center; }
+  .chcell i { display:block; font-style:normal; color:#556; font-size:9px; }
+  .chcell b { font-size:16px; color:#dde; font-weight:600; }
+  .chcell b.long { font-size:11.5px; }
+  .chcell.rest { opacity:.35; }
+  .chcell.now { background:#1d3a26; border-color:#3c8; }
   #strategy { margin:16px 0 4px; }
   #strategy summary { color:#fc8; font-size:14px; cursor:pointer; font-weight:bold; }
   .stbox { background:#141a14; border:1px solid #2a3a2a; border-radius:8px;
@@ -481,6 +515,7 @@ _TEMPLATE = """<!DOCTYPE html>
   <div id="transport">
     <button class="primary" id="play">▶</button>
     <button id="full">▶ 頭から通す</button>
+    <button id="chartbtn">🗺 ルート通し</button>
     <label style="margin-left:8px">ループ <input type="checkbox" id="loop" checked></label>
     <span id="loopinfo"></span>
     <label style="margin-left:8px">速度 <input type="range" id="rate" min="40" max="100" value="100" style="width:100px">
@@ -492,10 +527,10 @@ _TEMPLATE = """<!DOCTYPE html>
     <h3 id="lessontitle"></h3><pre id="lessonbody"></pre>
     <div class="backlinks" id="lessonlinks"></div></div>
   <div id="score"></div>
+  <div id="chart"></div>
   <details id="fret">
     <summary id="fretsum">指板マップ</summary>
-    <div style="margin-top:8px">
-      表示:
+    <div style="margin-top:2px">
       <label><input type="radio" name="fbmode" value="name"> 音名</label>
       <label><input type="radio" name="fbmode" value="key"> 度数（キー基準）</label>
       <label><input type="radio" name="fbmode" value="chord" checked> 度数（コード追従）</label>
@@ -753,6 +788,29 @@ D.phrases.forEach((p, i) => {
 });
 document.getElementById('score').innerHTML = scoreHtml;
 
+// 🗺 ルート通しチャート: 全小節のコードを1枚に。演奏中に見る用
+let chartHtml = '';
+let chartGridOpen = false;
+D.chart.forEach(c => {
+  if (c.sec) {
+    if (chartGridOpen) chartHtml += '</div>';
+    chartHtml += `<div class="chsec">${c.sec}</div><div class="chgrid">`;
+    chartGridOpen = true;
+  } else if (!chartGridOpen) {
+    chartHtml += '<div class="chgrid">';
+    chartGridOpen = true;
+  }
+  const long = (c.label || '').length > 5;
+  chartHtml += `<div class="chcell${c.rest ? ' rest' : ''}" data-bar="${c.bar}"
+    onclick="seek(barTime(${c.bar}))" title="クリックでこの小節へ">
+    <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${c.label || ''}</b></div>`;
+});
+if (chartGridOpen) chartHtml += '</div>';
+document.getElementById('chart').innerHTML =
+  '<span id="chartclose" onclick="toggleChart()">✕ 閉じる (Esc)</span>' + chartHtml;
+function toggleChart() { document.getElementById('chart').classList.toggle('on'); }
+document.getElementById('chartbtn').onclick = toggleChart;
+
 document.querySelectorAll('.rollsvg').forEach(svg => {
   const t0 = Number(svg.dataset.t0cell), cells = Number(svg.dataset.cells);
   svg.onclick = ev =>
@@ -803,6 +861,7 @@ const chordEvents = D.chords.map(c => ({
 }));
 let lastChord = null;
 let lastScrollT0 = null;
+let lastChartBar = 0;
 
 function syncUI(tOverride) {
   const t = typeof tOverride === 'number' ? tOverride : clock.currentTime;
@@ -814,6 +873,15 @@ function syncUI(tOverride) {
   document.getElementById('pos').textContent = `${fmt(t)} / bar ${bar}`;
   const pi = phraseAt(bar);
   if (pi >= 0 && pi !== current) setActive(pi);
+  // ルート通しチャートの現在小節ハイライト + 追従スクロール
+  const chartEl = document.getElementById('chart');
+  if (chartEl.classList.contains('on') && bar !== lastChartBar) {
+    lastChartBar = bar;
+    chartEl.querySelectorAll('.chcell').forEach(el =>
+      el.classList.toggle('now', Number(el.dataset.bar) === bar));
+    const cur = chartEl.querySelector('.chcell.now');
+    if (cur && playing()) cur.scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
   // ロールの再生線 (該当する段だけに表示) + 通しモードの自動スクロール
   const rel = t / spb16;
   document.querySelectorAll('.rollhead').forEach(head => {
@@ -900,6 +968,7 @@ document.addEventListener('keydown', e => {
     e.preventDefault();
     playing() ? pauseAll() : playAll();
   }
+  if (e.code === 'Escape') document.getElementById('chart').classList.remove('on');
   if (e.code === 'ArrowRight' && current < D.phrases.length - 1) select(current + 1);
   if (e.code === 'ArrowLeft' && current > 0) select(current - 1);
 });
