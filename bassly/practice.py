@@ -319,7 +319,8 @@ def build_payload(
 
     stats["likes"] = sum(1 for p in phrase_dicts if p.get("like"))
 
-    # ルート通しチャート: 全小節のコード (=踏むルート) を1枚に。休みも明示
+    # ルート通しチャート: 全小節について「実際に踏む音」を1枚に。
+    # 分数コードは指定ベース音、拍途中の変化は (拍)音名 で表す。休みも明示
     last_bar = max(
         [max_bar]
         + [s.end_bar for s in song.sections]
@@ -327,15 +328,42 @@ def build_payload(
     )
     chart_labels = analysis.chords_by_bar(song.chords, 1, last_bar)
     section_starts = {s.start_bar: s.name for s in song.sections}
-    chart = [
-        {
-            "bar": bar,
-            "label": chart_labels.get(bar, ""),
-            "rest": bar not in by_bar,
-            "sec": section_starts.get(bar),
-        }
-        for bar in range(1, last_bar + 1)
-    ]
+
+    def target_name(symbol: str) -> str | None:
+        ch = theory.parse_chord(symbol)
+        if ch is None:
+            return None
+        pc = ch.bass_pc if ch.bass_pc is not None else ch.root_pc
+        return theory.spell_pc(pc, song.key, song.notation)
+
+    chart = []
+    current_chord: str | None = None
+    for bar in range(1, last_bar + 1):
+        evs = sorted(
+            (c for c in song.chords if c.bar == bar), key=lambda c: c.beat
+        )
+        if (not evs or evs[0].beat > 1.0) and current_chord:
+            evs.insert(0, type(song.chords[0])(bar=bar, beat=1.0, chord=current_chord))
+        if evs:
+            current_chord = evs[-1].chord
+        # 連続する同じ音はまとめる: "B♭" / "C# (4)E♭"
+        segments: list[str] = []
+        prev = None
+        for c in evs:
+            name = target_name(c.chord)
+            if name is None or name == prev:
+                continue
+            segments.append(name if c.beat == 1.0 else f"({c.beat:g}){name}")
+            prev = name
+        chart.append(
+            {
+                "bar": bar,
+                "label": chart_labels.get(bar, ""),
+                "play": " ".join(segments),
+                "rest": bar not in by_bar,
+                "sec": section_starts.get(bar),
+            }
+        )
 
     return {
         "chart": chart,
@@ -800,10 +828,13 @@ D.chart.forEach(c => {
     chartHtml += '<div class="chgrid">';
     chartGridOpen = true;
   }
-  const long = (c.label || '').length > 5;
+  const play = c.play || c.label || '';
+  const long = play.length > 5;
+  const sub = c.label && c.label !== play
+    ? `<small style="display:block;color:#556;font-size:8.5px">${c.label}</small>` : '';
   chartHtml += `<div class="chcell${c.rest ? ' rest' : ''}" data-bar="${c.bar}"
     onclick="seek(barTime(${c.bar}))" title="クリックでこの小節へ">
-    <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${c.label || ''}</b></div>`;
+    <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${play}</b>${sub}</div>`;
 });
 if (chartGridOpen) chartHtml += '</div>';
 document.getElementById('chart').innerHTML =
