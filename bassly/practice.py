@@ -512,7 +512,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .card:hover { background:#1e2a1e; }
   .card.active { background:#1d3a26; border-color:#3c8; }
   #transport { position:sticky; top:0; background:#111e; backdrop-filter:blur(4px);
-               padding:10px 0 10px; z-index:2; border-bottom:1px solid #333; }
+               padding:10px 0 10px; z-index:6; border-bottom:1px solid #333; }
   button { background:#2a2a2a; color:#eee; border:1px solid #444; border-radius:8px;
            padding:7px 14px; font-size:14px; cursor:pointer; }
   button.primary { background:#1d3a26; border-color:#3c8; font-size:17px; padding:7px 24px; }
@@ -567,13 +567,14 @@ _TEMPLATE = """<!DOCTYPE html>
   .hint { color:#777; font-size:12px; margin-top:24px; line-height:1.8; }
   #fret { position:fixed; bottom:0; left:294px; right:0; background:#0f0f0fee;
           backdrop-filter:blur(4px); border-top:1px solid #333; margin:0;
-          padding:4px 14px 6px; z-index:4; max-height:34vh; overflow:auto; }
+          padding:4px 14px 6px; z-index:6; max-height:34vh; overflow:auto; }
   #fret summary { color:#8a8; font-size:11.5px; }
   #fret label { font-size:11px; color:#999; }
   #fret .hint { margin-top:4px; font-size:10.5px; line-height:1.5; }
   #fret .lchip { font-size:10.5px; padding:1px 8px; margin-top:2px; }
   #chart { display:none; position:fixed; top:0; left:294px; right:0; bottom:0;
-           background:#101014fa; z-index:5; overflow-y:auto; padding:12px 22px 26vh; }
+           background:#101014fa; z-index:5; overflow-y:auto;
+           padding:118px 22px 26vh; }
   #chart.on { display:block; }
   #chartclose { float:right; cursor:pointer; color:#667; font-size:14px; padding:4px 10px; }
   .chsec { color:#8a8; font-weight:bold; margin:9px 0 3px; font-size:12.5px; }
