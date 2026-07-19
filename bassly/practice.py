@@ -338,6 +338,7 @@ def build_payload(
 
     chart = []
     current_chord: str | None = None
+    rest_run = 0
     for bar in range(1, last_bar + 1):
         evs = sorted(
             (c for c in song.chords if c.bar == bar), key=lambda c: c.beat
@@ -355,15 +356,19 @@ def build_payload(
                 continue
             segments.append(name if c.beat == 1.0 else f"{c.beat:g}拍→{name}")
             prev = name
+        rest = bar not in by_bar
         chart.append(
             {
                 "bar": bar,
                 "label": chart_labels.get(bar, ""),
                 "play": " ".join(segments),
-                "rest": bar not in by_bar,
+                "rest": rest,
+                # 2小節以上の休みからの復帰 = 事故ポイントなので目立たせる
+                "entry": (not rest) and rest_run >= 2,
                 "sec": section_starts.get(bar),
             }
         )
+        rest_run = rest_run + 1 if rest else 0
 
     return {
         "chart": chart,
@@ -423,6 +428,61 @@ def build_payload(
 
 def render(payload: dict) -> str:
     return _TEMPLATE.replace("__DATA__", json.dumps(payload, ensure_ascii=False))
+
+
+def render_chart(payload: dict) -> str:
+    """1枚モノのコードマップ (静的・印刷対応)。スタジオ当日に紙/スマホで見る用。"""
+    parts = [
+        "<!DOCTYPE html><html lang='ja'><head><meta charset='utf-8'>",
+        f"<title>{payload['title']} — コードマップ</title>",
+        "<style>",
+        "body{font-family:-apple-system,'Hiragino Sans',sans-serif;background:#fff;"
+        "color:#111;margin:20px;max-width:900px}",
+        "h1{font-size:15px;margin:0 0 2px}",
+        ".legend{color:#555;font-size:10.5px;margin:2px 0 12px;line-height:1.5}",
+        ".sec{font-weight:bold;font-size:12px;margin:8px 0 3px;border-top:1px solid #ccc;"
+        "padding-top:5px}",
+        ".grid{display:grid;grid-template-columns:repeat(8,1fr);gap:3px}",
+        ".cell{border:1px solid #bbb;border-radius:4px;text-align:center;padding:1px 1px 3px}",
+        ".cell i{display:block;font-style:normal;color:#999;font-size:8px}",
+        ".cell b{font-size:13px;font-weight:700}",
+        ".cell b.long{font-size:9.5px}",
+        ".cell.rest{background:#eee}.cell.rest b{color:#aaa}",
+        ".cell.entry{border:2px solid #e8871e}",
+        "@media print{body{margin:6mm}.cell b{font-size:11px}.sec{font-size:11px}}",
+        "</style></head><body>",
+        f"<h1>{payload['title']} — ルート通しコードマップ"
+        f" (キー {payload.get('key') or '?'} / ♩={payload['bpm']:g})</h1>",
+        "<div class='legend'>大きい字 = 踏む音。「B 4拍→Bb」= 1〜3拍はB、4拍目からBb。"
+        "小さい字 = 元のコード名 (分数コードは右側を弾く)。灰色 = ベース休み。"
+        "<b style='color:#e8871e'>オレンジ枠 = 休み明けの入り (要注意)</b></div>",
+    ]
+    open_grid = False
+    for c in payload["chart"]:
+        if c["sec"]:
+            if open_grid:
+                parts.append("</div>")
+            parts.append(f"<div class='sec'>{c['sec']}</div><div class='grid'>")
+            open_grid = True
+        elif not open_grid:
+            parts.append("<div class='grid'>")
+            open_grid = True
+        play = c["play"] or c["label"] or ""
+        long = " class='long'" if len(play) > 5 else ""
+        sub = (
+            f"<small style='display:block;color:#999;font-size:7.5px'>{c['label']}</small>"
+            if c["label"] and c["label"] != play
+            else ""
+        )
+        cls = "cell" + (" rest" if c["rest"] else "") + (" entry" if c["entry"] else "")
+        parts.append(
+            f"<div class='{cls}'><i>{c['bar']}{' 休' if c['rest'] else ''}</i>"
+            f"<b{long}>{play}</b>{sub}</div>"
+        )
+    if open_grid:
+        parts.append("</div>")
+    parts.append("</body></html>")
+    return "".join(parts)
 
 
 def stems_in(song_dir: Path) -> list[str]:

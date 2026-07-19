@@ -198,6 +198,23 @@ def practice(
 
 
 @app.command()
+def chart(
+    song_dir: Path = typer.Argument(help="Song directory containing song.yaml and tab.txt"),
+    out: Path = typer.Option(None, help="出力先 (default: <song_dir>/output/chart.html)"),
+) -> None:
+    """1枚モノのコードマップ (静的・印刷対応) を生成。スタジオ当日用."""
+    song = load_song(song_dir)
+    events = load_events(song_dir)
+    phrases = sheetmod.load_phrases(song_dir)
+    payload = practicemod.build_payload(song, events, phrases, [])
+    html = practicemod.render_chart(payload)
+    out = out or song_dir / "output" / "chart.html"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(html, encoding="utf-8")
+    typer.echo(f"→ {out}")
+
+
+@app.command()
 def verify(
     song_dir: Path = typer.Argument(help="Song directory containing song.yaml and tab.txt"),
     bars: str = typer.Option(None, help="Bar range to verify, e.g. 11-12"),
