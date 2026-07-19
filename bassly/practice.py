@@ -70,6 +70,7 @@ LESSON_ALIASES = {
     "octaves": ["オクターブ"],
     "fourths-tuning": ["4度チューニング"],
     "pedal": ["ペダルポイント", "ペダル"],
+    "degree-progressions": ["ディグリーネーム", "ディグリー", "王道進行", "丸サ進行"],
 }
 
 # just-in-case 派 (順番に学びたい人) 向けの推奨パス。UIの主役は just-in-time の
@@ -83,6 +84,7 @@ LESSON_ORDER = [
     "chromatic-approach",
     "slash-chords",
     "pedal",
+    "degree-progressions",
 ]
 
 
@@ -340,32 +342,36 @@ def build_payload(
                         best = (cost, (s, f))
         return best[1] if best else None
 
+    # 4小節の行ごとに1枚 (繰り返しは同じ形の図が並ぶ = 同型が目で分かる)
     rootpaths = []
     for sec in song.sections:
-        path: list[dict] = []
-        prev: tuple | None = None
-        for bar in range(sec.start_bar, sec.end_bar + 1):
-            for c in sorted(
-                (c for c in song.chords if c.bar == bar), key=lambda c: c.beat
-            ):
-                ch = theory.parse_chord(c.chord)
-                if ch is None:
-                    continue
-                pc = ch.bass_pc if ch.bass_pc is not None else ch.root_pc
-                pos = root_pos_for(bar, pc, prev)
-                if pos and pos != prev:
-                    path.append(
-                        {
-                            "s": pos[0],
-                            "f": pos[1],
-                            "name": theory.spell_pc(pc, song.key, song.notation),
-                        }
-                    )
-                    prev = pos
-        if path:
-            rootpaths.append(
-                {"sec": sec.name, "start": sec.start_bar, "path": path}
-            )
+        chunk = sec.start_bar
+        while chunk <= sec.end_bar:
+            chunk_end = min(chunk + 3, sec.end_bar)
+            path: list[dict] = []
+            prev: tuple | None = None
+            for bar in range(chunk, chunk_end + 1):
+                for c in sorted(
+                    (c for c in song.chords if c.bar == bar), key=lambda c: c.beat
+                ):
+                    ch = theory.parse_chord(c.chord)
+                    if ch is None:
+                        continue
+                    pc = ch.bass_pc if ch.bass_pc is not None else ch.root_pc
+                    pos = root_pos_for(bar, pc, prev)
+                    if pos and pos != prev:
+                        path.append(
+                            {
+                                "s": pos[0],
+                                "f": pos[1],
+                                "pc": pc,
+                                "name": theory.spell_pc(pc, song.key, song.notation),
+                            }
+                        )
+                        prev = pos
+            if path:
+                rootpaths.append({"start": chunk, "end": chunk_end, "path": path})
+            chunk += 4
 
     # ルート通しチャート: 全小節について「実際に踏む音」を1枚に。
     # 分数コードは指定ベース音、拍途中の変化は (拍)音名 で表す。休みも明示
@@ -383,6 +389,27 @@ def build_payload(
             return None
         pc = ch.bass_pc if ch.bass_pc is not None else ch.root_pc
         return theory.spell_pc(pc, song.key, song.notation)
+
+    # ディグリー (キーに対するコードの度数)。文字ではなく数字で進行を覚えると
+    # キーが変わっても他の曲でも使い回せる — 王道進行4561、丸サ進行4536の言語
+    key_root = theory.parse_note_name(song.key) if song.key else None
+    scale_order = (
+        [(key_root + iv) % 12 for iv in (0, 2, 4, 5, 7, 9, 11)]
+        if key_root is not None
+        else []
+    )
+
+    def degree_of(symbol: str) -> str | None:
+        ch = theory.parse_chord(symbol)
+        if ch is None or not scale_order:
+            return None
+        pc = ch.root_pc
+        if pc in scale_order:
+            return str(scale_order.index(pc) + 1)
+        up = (pc + 1) % 12
+        if up in scale_order:
+            return f"♭{scale_order.index(up) + 1}"
+        return "?"
 
     chart = []
     current_chord: str | None = None
@@ -404,12 +431,21 @@ def build_payload(
                 continue
             segments.append(name if c.beat == 1.0 else f"{c.beat:g}拍→{name}")
             prev = name
+        deg_segments: list[str] = []
+        prev_deg = None
+        for c in evs:
+            d = degree_of(c.chord)
+            if d is None or d == prev_deg:
+                continue
+            deg_segments.append(d if c.beat == 1.0 else f"{c.beat:g}拍→{d}")
+            prev_deg = d
         rest = bar not in by_bar
         chart.append(
             {
                 "bar": bar,
                 "label": chart_labels.get(bar, ""),
                 "play": " ".join(segments),
+                "deg": " ".join(deg_segments),
                 "rest": rest,
                 # 2小節以上の休みからの復帰 = 事故ポイントなので目立たせる
                 "entry": (not rest) and rest_run >= 2,
@@ -518,6 +554,11 @@ def render_chart(payload: dict) -> str:
             open_grid = True
         play = c["play"] or c["label"] or ""
         long = " class='long'" if len(play) > 5 else ""
+        deg = (
+            f"<span style='display:block;color:#2a7f8f;font-size:8px'>{c['deg']}</span>"
+            if c.get("deg")
+            else ""
+        )
         sub = (
             f"<small style='display:block;color:#999;font-size:7.5px'>{c['label']}</small>"
             if c["label"] and c["label"] != play
@@ -526,7 +567,7 @@ def render_chart(payload: dict) -> str:
         cls = "cell" + (" rest" if c["rest"] else "") + (" entry" if c["entry"] else "")
         parts.append(
             f"<div class='{cls}'><i>{c['bar']}{' 休' if c['rest'] else ''}</i>"
-            f"<b{long}>{play}</b>{sub}</div>"
+            f"<b{long}>{play}</b>{deg}{sub}</div>"
         )
     if open_grid:
         parts.append("</div>")
@@ -635,8 +676,10 @@ _TEMPLATE = """<!DOCTYPE html>
   .chcell b { font-size:14px; color:#dde; font-weight:600; }
   .chcell b.long { font-size:10px; }
   .chcell.entry { border-color:#e8871e; border-width:2px; }
-  .rootmap { flex-shrink:0; position:sticky; top:118px; }
+  .chcell .dg { display:block; color:#5ac8d8; font-size:9.5px; }
+  .rootmap { flex-shrink:0; }
   .rootmap svg { background:#0d0d12; border:1px solid #223; border-radius:6px; }
+  .rmsvg circle.rootnow { stroke:#fa0; fill:#4a3208; }
   .chcell.rest { opacity:.35; }
   .chcell.now { background:#1d3a26; border-color:#3c8; }
   #strategy { margin:16px 0 4px; }
@@ -939,7 +982,7 @@ function buildRootMap(rp, idx) {
   const W = GUT + 11 * CELL, H = ROW0 + 5 * ROWH + 4;
   const px = f => GUT + f * CELL + CELL / 2;
   const py = s => ROW0 + STR.indexOf(s) * ROWH;
-  let g = `<svg width="${W}" height="${H}">`;
+  let g = `<svg class="rmsvg" data-start="${rp.start}" data-end="${rp.end}" width="${W}" height="${H}">`;
   g += `<defs><marker id="arw${idx}" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#7af"/></marker></defs>`;
   for (let f = 0; f <= 11; f++)
     g += `<line x1="${GUT + f*CELL}" y1="${ROW0 - 8}" x2="${GUT + f*CELL}" y2="${H - 4}" stroke="${f ? '#223' : '#556'}" stroke-width="${f ? 1 : 2}"/>`;
@@ -966,44 +1009,55 @@ function buildRootMap(rp, idx) {
     const key = `${q.s}${q.f}`;
     if (seen.has(key)) return;
     seen.add(key);
-    g += `<circle cx="${px(q.f)}" cy="${py(q.s)}" r="9" fill="#1d3a26" stroke="#3c8"/>`;
+    g += `<circle cx="${px(q.f)}" cy="${py(q.s)}" r="9" data-pc="${q.pc}" fill="#1d3a26" stroke="#3c8"/>`;
     g += `<text x="${px(q.f)}" y="${py(q.s) + 3}" fill="#dfd" font-size="8" text-anchor="middle">${q.name}</text>`;
     g += `<text x="${px(q.f) - 12}" y="${py(q.s) - 8}" fill="#fc8" font-size="8">${i + 1}</text>`;
   });
   return g + '</svg>';
 }
 
-// 🗺 ルート通しチャート: 全小節のコードを1枚に。演奏中に見る用
-const rootBySec = {};
-(D.rootpaths || []).forEach((r, i) => { rootBySec[r.start] = buildRootMap(r, i); });
+// 🗺 ルート通しチャート: 4小節=1行、行ごとに指板の軌跡を右に添える
+const rootByRow = {};
+(D.rootpaths || []).forEach((r, i) => { rootByRow[r.start] = buildRootMap(r, i); });
 let chartHtml = '';
-let chartGridOpen = false;
-let pendingMap = '';
+let rowOpen = false;
+let rowStart = 0;
+let cellsInRow = 0;
+function closeRow() {
+  if (!rowOpen) return;
+  chartHtml += `</div>${rootByRow[rowStart] ? `<div class="rootmap">${rootByRow[rowStart]}</div>` : ''}</div>`;
+  rowOpen = false;
+  cellsInRow = 0;
+}
+function openRow(bar) {
+  chartHtml += '<div class="chrow"><div class="chgrid">';
+  rowOpen = true;
+  rowStart = bar;
+  cellsInRow = 0;
+}
 D.chart.forEach(c => {
   if (c.sec) {
-    if (chartGridOpen) chartHtml += `</div>${pendingMap}</div>`;
-    pendingMap = rootBySec[c.bar]
-      ? `<div class="rootmap">${rootBySec[c.bar]}</div>` : '';
-    chartHtml += `<div class="chsec">${c.sec}</div><div class="chrow"><div class="chgrid">`;
-    chartGridOpen = true;
-  } else if (!chartGridOpen) {
-    chartHtml += '<div class="chrow"><div class="chgrid">';
-    chartGridOpen = true;
-    pendingMap = '';
+    closeRow();
+    chartHtml += `<div class="chsec">${c.sec}</div>`;
   }
+  if (!rowOpen) openRow(c.bar);
   const play = c.play || c.label || '';
   const long = play.length > 5;
   const sub = c.label && c.label !== play
     ? `<small style="display:block;color:#556;font-size:8.5px">${c.label}</small>` : '';
   chartHtml += `<div class="chcell${c.rest ? ' rest' : ''}${c.entry ? ' entry' : ''}" data-bar="${c.bar}"
     onclick="seek(barTime(${c.bar}))" title="クリックでこの小節へ">
-    <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${play}</b>${sub}</div>`;
+    <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${play}</b>
+    ${c.deg ? `<span class="dg">${c.deg}</span>` : ''}${sub}</div>`;
+  cellsInRow++;
+  if (cellsInRow === 4) closeRow();
 });
-if (chartGridOpen) chartHtml += `</div>${pendingMap}</div>`;
+closeRow();
 document.getElementById('chart').innerHTML =
   '<span id="chartclose" onclick="toggleChart()">✕ 閉じる (Esc)</span>' +
   '<div class="notes" style="margin:2px 0 6px">読み方: 大きい字 = 踏む音。' +
-  '「B 4拍→Bb」= 1〜3拍はB、4拍目からBb。小さい字 = 元のコード名。薄いマス = ベース休み。' +
+  '「B 4拍→Bb」= 1〜3拍はB、4拍目からBb。<span style="color:#5ac8d8">水色 = キーに対する度数 (ディグリー)</span>' +
+  ' — 同じ数字列は同じ進行。小さい字 = 元のコード名。薄いマス = ベース休み。' +
   '<label style="margin-left:10px"><input type="checkbox" id="rootmapchk" checked> 指板の動きを表示</label></div>' +
   chartHtml;
 document.getElementById('rootmapchk').onchange = e =>
@@ -1082,6 +1136,21 @@ function syncUI(tOverride) {
       el.classList.toggle('now', Number(el.dataset.bar) === bar));
     const cur = chartEl.querySelector('.chcell.now');
     if (cur && playing()) cur.scrollIntoView({block: 'center', behavior: 'smooth'});
+  }
+  // 指板の軌跡: いま鳴っているルートの点を光らせる (該当する行の図だけ)
+  if (chartEl.classList.contains('on')) {
+    let curChord = null;
+    for (const c of chordEvents) { if (c.t <= t + 0.06) curChord = c; else break; }
+    chartEl.querySelectorAll('.rmsvg circle.rootnow').forEach(el =>
+      el.classList.remove('rootnow'));
+    if (curChord && curChord.pc !== null) {
+      chartEl.querySelectorAll('.rmsvg').forEach(svg => {
+        if (bar >= Number(svg.dataset.start) && bar <= Number(svg.dataset.end)) {
+          svg.querySelectorAll(`circle[data-pc="${curChord.pc}"]`).forEach(el =>
+            el.classList.add('rootnow'));
+        }
+      });
+    }
   }
   // ロールの再生線 (該当する段だけに表示) + 通しモードの自動スクロール
   const rel = t / spb16;
