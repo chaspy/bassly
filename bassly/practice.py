@@ -319,6 +319,54 @@ def build_payload(
 
     stats["likes"] = sum(1 for p in phrase_dicts if p.get("like"))
 
+    # ルートの動き: セクションごとに「指板上でどう移動するか」の軌跡。
+    # 位置は転記の実データ (degree=R / 指定ベース音の弦・フレット) を優先し、
+    # 無ければ直前の位置から移動最小のポジションを選ぶ
+    def root_pos_for(bar: int, pc: int, prev: tuple | None) -> tuple | None:
+        for a in by_bar.get(bar, []):
+            if a.event.ghost:
+                continue
+            midi = theory.pitch_at(a.event.string, a.event.fret).midi
+            if midi % 12 == pc and (a.degree == "R" or "指定ベース音" in a.tags):
+                return (a.event.string, a.event.fret)
+        best = None
+        for s in ("B", "E", "A", "D"):
+            for f in range(0, 11):
+                if (theory.OPEN_STRING_MIDI[s] + f) % 12 == pc:
+                    cost = abs(f - (prev[1] if prev else 2)) + (
+                        0 if prev and s == prev[0] else 1
+                    )
+                    if best is None or cost < best[0]:
+                        best = (cost, (s, f))
+        return best[1] if best else None
+
+    rootpaths = []
+    for sec in song.sections:
+        path: list[dict] = []
+        prev: tuple | None = None
+        for bar in range(sec.start_bar, sec.end_bar + 1):
+            for c in sorted(
+                (c for c in song.chords if c.bar == bar), key=lambda c: c.beat
+            ):
+                ch = theory.parse_chord(c.chord)
+                if ch is None:
+                    continue
+                pc = ch.bass_pc if ch.bass_pc is not None else ch.root_pc
+                pos = root_pos_for(bar, pc, prev)
+                if pos and pos != prev:
+                    path.append(
+                        {
+                            "s": pos[0],
+                            "f": pos[1],
+                            "name": theory.spell_pc(pc, song.key, song.notation),
+                        }
+                    )
+                    prev = pos
+        if path:
+            rootpaths.append(
+                {"sec": sec.name, "start": sec.start_bar, "path": path}
+            )
+
     # ルート通しチャート: 全小節について「実際に踏む音」を1枚に。
     # 分数コードは指定ベース音、拍途中の変化は (拍)音名 で表す。休みも明示
     last_bar = max(
@@ -372,6 +420,7 @@ def build_payload(
 
     return {
         "chart": chart,
+        "rootpaths": rootpaths,
         "strategy": strategy,
         "stats": stats,
         "title": song.title,
@@ -584,6 +633,8 @@ _TEMPLATE = """<!DOCTYPE html>
   .chcell b { font-size:14px; color:#dde; font-weight:600; }
   .chcell b.long { font-size:10px; }
   .chcell.entry { border-color:#e8871e; border-width:2px; }
+  .rootmap { margin:2px 0 6px; }
+  .rootmap svg { background:#0d0d12; border:1px solid #223; border-radius:6px; }
   .chcell.rest { opacity:.35; }
   .chcell.now { background:#1d3a26; border-color:#3c8; }
   #strategy { margin:16px 0 4px; }
@@ -879,13 +930,58 @@ D.phrases.forEach((p, i) => {
 });
 document.getElementById('score').innerHTML = scoreHtml;
 
+// ルートの動き: セクションの指板上の軌跡 (点=踏む場所、矢印=移動)
+function buildRootMap(rp, idx) {
+  const GUT = 26, CELL = 30, ROW0 = 24, ROWH = 17;
+  const STR = ['G', 'D', 'A', 'E', 'B'];
+  const W = GUT + 11 * CELL, H = ROW0 + 5 * ROWH + 4;
+  const px = f => GUT + f * CELL + CELL / 2;
+  const py = s => ROW0 + STR.indexOf(s) * ROWH;
+  let g = `<svg width="${W}" height="${H}">`;
+  g += `<defs><marker id="arw${idx}" markerWidth="7" markerHeight="7" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 z" fill="#7af"/></marker></defs>`;
+  for (let f = 0; f <= 11; f++)
+    g += `<line x1="${GUT + f*CELL}" y1="${ROW0 - 8}" x2="${GUT + f*CELL}" y2="${H - 4}" stroke="${f ? '#223' : '#556'}" stroke-width="${f ? 1 : 2}"/>`;
+  STR.forEach(s => {
+    g += `<text x="4" y="${py(s) + 3}" fill="#667" font-size="9">${s}</text>`;
+    g += `<line x1="${GUT}" y1="${py(s)}" x2="${W}" y2="${py(s)}" stroke="#1a2028"/>`;
+  });
+  for (let f = 0; f <= 10; f++)
+    g += `<text x="${px(f) - 3}" y="${ROW0 - 12}" fill="#556" font-size="8">${f}</text>`;
+  const seen = new Set(), edges = new Set();
+  rp.path.forEach((q, i) => {
+    if (i > 0) {
+      const p0 = rp.path[i-1];
+      const ek = `${p0.s}${p0.f}-${q.s}${q.f}`;
+      if (!edges.has(ek)) {
+        edges.add(ek);
+        const x1 = px(p0.f), y1 = py(p0.s), x2 = px(q.f), y2 = py(q.s);
+        const dx = x2 - x1, dy = y2 - y1, len = Math.hypot(dx, dy) || 1;
+        g += `<line x1="${x1 + dx/len*11}" y1="${y1 + dy/len*11}" x2="${x2 - dx/len*12}" y2="${y2 - dy/len*12}" stroke="#7af" stroke-width="1.5" marker-end="url(#arw${idx})"/>`;
+      }
+    }
+  });
+  rp.path.forEach((q, i) => {
+    const key = `${q.s}${q.f}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    g += `<circle cx="${px(q.f)}" cy="${py(q.s)}" r="10" fill="#1d3a26" stroke="#3c8"/>`;
+    g += `<text x="${px(q.f)}" y="${py(q.s) + 3}" fill="#dfd" font-size="8" text-anchor="middle">${q.name}</text>`;
+    g += `<text x="${px(q.f) - 12}" y="${py(q.s) - 8}" fill="#fc8" font-size="8">${i + 1}</text>`;
+  });
+  return g + '</svg>';
+}
+
 // 🗺 ルート通しチャート: 全小節のコードを1枚に。演奏中に見る用
+const rootBySec = {};
+(D.rootpaths || []).forEach((r, i) => { rootBySec[r.start] = buildRootMap(r, i); });
 let chartHtml = '';
 let chartGridOpen = false;
 D.chart.forEach(c => {
   if (c.sec) {
     if (chartGridOpen) chartHtml += '</div>';
-    chartHtml += `<div class="chsec">${c.sec}</div><div class="chgrid">`;
+    chartHtml += `<div class="chsec">${c.sec}</div>` +
+      (rootBySec[c.bar] ? `<div class="rootmap">${rootBySec[c.bar]}</div>` : '') +
+      '<div class="chgrid">';
     chartGridOpen = true;
   } else if (!chartGridOpen) {
     chartHtml += '<div class="chgrid">';
@@ -903,8 +999,12 @@ if (chartGridOpen) chartHtml += '</div>';
 document.getElementById('chart').innerHTML =
   '<span id="chartclose" onclick="toggleChart()">✕ 閉じる (Esc)</span>' +
   '<div class="notes" style="margin:2px 0 6px">読み方: 大きい字 = 踏む音。' +
-  '「B 4拍→Bb」= 1〜3拍はB、4拍目からBb。小さい字 = 元のコード名。薄いマス = ベース休み</div>' +
+  '「B 4拍→Bb」= 1〜3拍はB、4拍目からBb。小さい字 = 元のコード名。薄いマス = ベース休み。' +
+  '<label style="margin-left:10px"><input type="checkbox" id="rootmapchk" checked> 指板の動きを表示</label></div>' +
   chartHtml;
+document.getElementById('rootmapchk').onchange = e =>
+  document.querySelectorAll('.rootmap').forEach(el =>
+    el.style.display = e.target.checked ? '' : 'none');
 function toggleChart() { document.getElementById('chart').classList.toggle('on'); }
 document.getElementById('chartbtn').onclick = toggleChart;
 
