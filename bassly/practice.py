@@ -636,7 +636,9 @@ _TEMPLATE = """<!DOCTYPE html>
            text-align:center; padding:0 1px; }
   .note { display:inline-block; min-width:17px; padding:1px 3px; border-radius:8px;
           font-size:9.5px; color:#8a8; border:1px solid #2a3a2a; }
-  .note.penta { color:#cec; border-color:#4a6; }
+  .note.penta { color:#bdb; border-color:#3a5a44; }
+  /* フレーズ練習中はそのフレーズの使用位置にフォーカス、他は沈める */
+  #fret.focus .note:not(.phrase):not(.chord):not(.root) { opacity:.35; }
   .note.root { background:#1d3a26; border-color:#3c8; color:#dfd; font-weight:bold; }
   .note.chord { background:#4a3208; border-color:#fa0; color:#ffd; box-shadow:0 0 6px #fa06; }
   .note.off { visibility:hidden; }
@@ -1096,6 +1098,9 @@ function setActive(i) {
     const n = document.querySelector(`.note[data-pos="${q.pos}"]`);
     if (n) { n.classList.add('phrase'); n.title = q.deg; }
   });
+  const fret = document.getElementById('fret');
+  if (fret) fret.classList.toggle('focus', (p.positions || []).length > 0);
+  if (D.fretboard) relabelFretboard();
 }
 
 function select(i) {
@@ -1223,7 +1228,8 @@ function relabelFretboard() {
     ? (lastChord && lastChord.pc !== null ? lastChord.pc : (D.fretboard ? D.fretboard.root_pc : 0))
     : (D.fretboard ? D.fretboard.root_pc : 0);
   document.querySelectorAll('.note').forEach(n => {
-    n.textContent = fbMode === 'name'
+    // フレーズの使用位置は常に音名 (音取り中は具体名が正義)。他はモードに従う
+    n.textContent = (fbMode === 'name' || n.classList.contains('phrase'))
       ? n.dataset.name
       : DEG[((Number(n.dataset.pc) - base) % 12 + 12) % 12];
   });
