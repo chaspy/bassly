@@ -629,21 +629,20 @@ _TEMPLATE = """<!DOCTYPE html>
   table { border-collapse:collapse; margin-top:8px; }
   td { padding:4px 12px 4px 0; font-size:13px; vertical-align:top; color:#999; }
   td.line { font-family:ui-monospace,'SF Mono',monospace; letter-spacing:1px; }
-  .fb { border-collapse:collapse; margin-top:4px; }
-  .fb th { color:#666; font-size:9px; padding:1px 3px; font-weight:normal; }
-  .fb th.mark { color:#bbb; font-weight:bold; }
-  .fb td { border-left:1px solid #2a2a2a; min-width:30px; height:19px;
-           text-align:center; padding:0 1px; }
-  .note { display:inline-block; min-width:17px; padding:1px 3px; border-radius:8px;
-          font-size:9.5px; color:#8a8; border:1px solid #2a3a2a; }
-  .note.penta { color:#bdb; border-color:#3a5a44; }
+  #fretmap svg { display:block; margin-top:2px; }
+  g.note circle { fill:#161a20; stroke:#2a3a2a; }
+  g.note text { fill:#8a8; font-size:8px; }
+  g.note.penta circle { stroke:#3a5a44; }
+  g.note.penta text { fill:#bdb; }
+  g.note.root circle { fill:#1d3a26; stroke:#3c8; }
+  g.note.root text { fill:#dfd; font-weight:bold; }
+  g.note.chord circle { fill:#4a3208; stroke:#fa0; }
+  g.note.chord text { fill:#ffd; }
+  g.note.off { visibility:hidden; }
+  g.note.off.chord, g.note.off.phrase { visibility:visible; }
+  g.note.phrase circle { stroke:#6cf; stroke-width:2; }
   /* フレーズ練習中はそのフレーズの使用位置にフォーカス、他は沈める */
-  #fret.focus .note:not(.phrase):not(.chord):not(.root) { opacity:.35; }
-  .note.root { background:#1d3a26; border-color:#3c8; color:#dfd; font-weight:bold; }
-  .note.chord { background:#4a3208; border-color:#fa0; color:#ffd; box-shadow:0 0 6px #fa06; }
-  .note.off { visibility:hidden; }
-  .note.off.chord, .note.off.phrase { visibility:visible; opacity:.95; }
-  .note.phrase { outline:2px solid #6cf; box-shadow:0 0 6px #6cf6; }
+  #fret.focus g.note:not(.phrase):not(.chord):not(.root) { opacity:.3; }
   .lchip { display:inline-block; margin:8px 6px 0 0; padding:3px 11px; border-radius:14px;
            border:1px solid #557; color:#aac; cursor:pointer; font-size:12px; user-select:none; }
   .lchip:hover { background:#1e2233; }
@@ -1196,21 +1195,26 @@ if (D.fretboard) {
   document.getElementById('fretsum').textContent =
     `指板マップ — キー ${fb.key}${fb.alias ? ` (=${fb.alias})` : ''} メジャースケール` +
     ' (緑=ルート、明るい丸=ペンタ)';
-  let html = '<table class="fb"><tr><th></th>' +
-    Array.from({length: fb.frets + 1}, (_, f) =>
-      `<th class="${marks.has(f) ? 'mark' : ''}">${f}</th>`).join('') + '</tr>';
-  fb.rows.forEach(r => {
-    const m = Object.fromEntries(r.cells.map(c => [c.fret, c]));
-    html += `<tr><th>${r.string}</th>` +
-      Array.from({length: fb.frets + 1}, (_, f) => {
-        const c = m[f];
-        if (!c) return '<td></td>';
-        const cls = 'note' + (c.root ? ' root' : '') + (c.penta ? ' penta' : '')
-          + (c.scale ? '' : ' off');
-        return `<td><span class="${cls}" data-pc="${c.pc}" data-pos="${c.pos}" data-name="${c.name}">${c.name}</span></td>`;
-      }).join('') + '</tr>';
+  // SVG描画: 行間が均等でコンパクト (テーブルはフォント高でガタつく)
+  const FG = 22, FC = 34, FR0 = 18, FRH = 15;
+  const FW = FG + (fb.frets + 1) * FC, FH = FR0 + 5 * FRH + 4;
+  let html = `<svg width="${FW}" height="${FH}">`;
+  for (let f = 0; f <= fb.frets; f++)
+    html += `<text x="${FG + f*FC + FC/2}" y="11" fill="${marks.has(f) ? '#bbb' : '#556'}" font-size="9" text-anchor="middle"${marks.has(f) ? ' font-weight="bold"' : ''}>${f}</text>`;
+  fb.rows.forEach((r, ri) => {
+    const cy = FR0 + ri * FRH + FRH / 2;
+    html += `<text x="6" y="${cy + 3}" fill="#667" font-size="9">${r.string}</text>`;
+    html += `<line x1="${FG}" y1="${cy}" x2="${FW}" y2="${cy}" stroke="#1a2028"/>`;
+    r.cells.forEach(c => {
+      const cx = FG + c.fret * FC + FC / 2;
+      const cls = 'note' + (c.root ? ' root' : '') + (c.penta ? ' penta' : '')
+        + (c.scale ? '' : ' off');
+      html += `<g class="${cls}" data-pc="${c.pc}" data-pos="${c.pos}" data-name="${c.name}">`
+        + `<circle cx="${cx}" cy="${cy}" r="7.5"/>`
+        + `<text x="${cx}" y="${cy + 3}" text-anchor="middle">${c.name}</text></g>`;
+    });
   });
-  document.getElementById('fretmap').innerHTML = html + '</table>';
+  document.getElementById('fretmap').innerHTML = html + '</svg>';
   document.getElementById('frethint').innerHTML =
     '5弦のコツ: B弦はE弦と同じ並びが5フレット右にずれたもの (B弦7f = E弦2f)。' +
     '明るい丸はそのまま E♭マイナーペンタでもある (平行調なので同じ音)。' +
@@ -1227,9 +1231,10 @@ function relabelFretboard() {
   const base = fbMode === 'chord'
     ? (lastChord && lastChord.pc !== null ? lastChord.pc : (D.fretboard ? D.fretboard.root_pc : 0))
     : (D.fretboard ? D.fretboard.root_pc : 0);
-  document.querySelectorAll('.note').forEach(n => {
+  document.querySelectorAll('#fretmap .note').forEach(n => {
     // フレーズの使用位置は常に音名 (音取り中は具体名が正義)。他はモードに従う
-    n.textContent = (fbMode === 'name' || n.classList.contains('phrase'))
+    const t = n.querySelector('text');
+    if (t) t.textContent = (fbMode === 'name' || n.classList.contains('phrase'))
       ? n.dataset.name
       : DEG[((Number(n.dataset.pc) - base) % 12 + 12) % 12];
   });
