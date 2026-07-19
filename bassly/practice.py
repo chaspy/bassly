@@ -627,13 +627,15 @@ _TEMPLATE = """<!DOCTYPE html>
   #chart.on { display:block; }
   #chartclose { float:right; cursor:pointer; color:#667; font-size:14px; padding:4px 10px; }
   .chsec { color:#8a8; font-weight:bold; margin:9px 0 3px; font-size:12.5px; }
-  .chgrid { display:grid; grid-template-columns:repeat(8, 1fr); gap:3px; }
+  .chrow { display:flex; gap:12px; align-items:flex-start; margin-bottom:2px; }
+  .chgrid { display:grid; grid-template-columns:repeat(4, 1fr); gap:3px;
+            flex:0 0 400px; }
   .chcell { border:1px solid #333; border-radius:5px; padding:2px 2px 4px; text-align:center; }
   .chcell i { display:block; font-style:normal; color:#556; font-size:8px; }
   .chcell b { font-size:14px; color:#dde; font-weight:600; }
   .chcell b.long { font-size:10px; }
   .chcell.entry { border-color:#e8871e; border-width:2px; }
-  .rootmap { margin:2px 0 6px; }
+  .rootmap { flex-shrink:0; position:sticky; top:118px; }
   .rootmap svg { background:#0d0d12; border:1px solid #223; border-radius:6px; }
   .chcell.rest { opacity:.35; }
   .chcell.now { background:#1d3a26; border-color:#3c8; }
@@ -932,7 +934,7 @@ document.getElementById('score').innerHTML = scoreHtml;
 
 // ルートの動き: セクションの指板上の軌跡 (点=踏む場所、矢印=移動)
 function buildRootMap(rp, idx) {
-  const GUT = 26, CELL = 30, ROW0 = 24, ROWH = 17;
+  const GUT = 24, CELL = 25, ROW0 = 22, ROWH = 15;
   const STR = ['G', 'D', 'A', 'E', 'B'];
   const W = GUT + 11 * CELL, H = ROW0 + 5 * ROWH + 4;
   const px = f => GUT + f * CELL + CELL / 2;
@@ -964,7 +966,7 @@ function buildRootMap(rp, idx) {
     const key = `${q.s}${q.f}`;
     if (seen.has(key)) return;
     seen.add(key);
-    g += `<circle cx="${px(q.f)}" cy="${py(q.s)}" r="10" fill="#1d3a26" stroke="#3c8"/>`;
+    g += `<circle cx="${px(q.f)}" cy="${py(q.s)}" r="9" fill="#1d3a26" stroke="#3c8"/>`;
     g += `<text x="${px(q.f)}" y="${py(q.s) + 3}" fill="#dfd" font-size="8" text-anchor="middle">${q.name}</text>`;
     g += `<text x="${px(q.f) - 12}" y="${py(q.s) - 8}" fill="#fc8" font-size="8">${i + 1}</text>`;
   });
@@ -976,16 +978,18 @@ const rootBySec = {};
 (D.rootpaths || []).forEach((r, i) => { rootBySec[r.start] = buildRootMap(r, i); });
 let chartHtml = '';
 let chartGridOpen = false;
+let pendingMap = '';
 D.chart.forEach(c => {
   if (c.sec) {
-    if (chartGridOpen) chartHtml += '</div>';
-    chartHtml += `<div class="chsec">${c.sec}</div>` +
-      (rootBySec[c.bar] ? `<div class="rootmap">${rootBySec[c.bar]}</div>` : '') +
-      '<div class="chgrid">';
+    if (chartGridOpen) chartHtml += `</div>${pendingMap}</div>`;
+    pendingMap = rootBySec[c.bar]
+      ? `<div class="rootmap">${rootBySec[c.bar]}</div>` : '';
+    chartHtml += `<div class="chsec">${c.sec}</div><div class="chrow"><div class="chgrid">`;
     chartGridOpen = true;
   } else if (!chartGridOpen) {
-    chartHtml += '<div class="chgrid">';
+    chartHtml += '<div class="chrow"><div class="chgrid">';
     chartGridOpen = true;
+    pendingMap = '';
   }
   const play = c.play || c.label || '';
   const long = play.length > 5;
@@ -995,7 +999,7 @@ D.chart.forEach(c => {
     onclick="seek(barTime(${c.bar}))" title="クリックでこの小節へ">
     <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${play}</b>${sub}</div>`;
 });
-if (chartGridOpen) chartHtml += '</div>';
+if (chartGridOpen) chartHtml += `</div>${pendingMap}</div>`;
 document.getElementById('chart').innerHTML =
   '<span id="chartclose" onclick="toggleChart()">✕ 閉じる (Esc)</span>' +
   '<div class="notes" style="margin:2px 0 6px">読み方: 大きい字 = 踏む音。' +
