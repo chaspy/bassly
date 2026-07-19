@@ -194,7 +194,12 @@ def practice(
     out = out or song_dir / "output" / "practice.html"
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")
+    # 印刷用コードマップも常にセットで生成 (アプリの🖨ボタンから開ける)
+    (out.parent / "chart.html").write_text(
+        practicemod.render_chart(payload), encoding="utf-8"
+    )
     typer.echo(f"→ {out}")
+    typer.echo(f"→ {out.parent / 'chart.html'}")
 
 
 @app.command()

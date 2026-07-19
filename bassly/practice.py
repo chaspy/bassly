@@ -573,15 +573,16 @@ _TEMPLATE = """<!DOCTYPE html>
   #fret .hint { margin-top:4px; font-size:10.5px; line-height:1.5; }
   #fret .lchip { font-size:10.5px; padding:1px 8px; margin-top:2px; }
   #chart { display:none; position:fixed; top:0; left:294px; right:0; bottom:0;
-           background:#101014fa; z-index:5; overflow-y:auto; padding:16px 26px 40vh; }
+           background:#101014fa; z-index:5; overflow-y:auto; padding:12px 22px 26vh; }
   #chart.on { display:block; }
   #chartclose { float:right; cursor:pointer; color:#667; font-size:14px; padding:4px 10px; }
-  .chsec { color:#8a8; font-weight:bold; margin:16px 0 5px; font-size:14px; }
-  .chgrid { display:grid; grid-template-columns:repeat(8, 1fr); gap:4px; }
-  .chcell { border:1px solid #333; border-radius:6px; padding:5px 3px 7px; text-align:center; }
-  .chcell i { display:block; font-style:normal; color:#556; font-size:9px; }
-  .chcell b { font-size:16px; color:#dde; font-weight:600; }
-  .chcell b.long { font-size:11.5px; }
+  .chsec { color:#8a8; font-weight:bold; margin:9px 0 3px; font-size:12.5px; }
+  .chgrid { display:grid; grid-template-columns:repeat(8, 1fr); gap:3px; }
+  .chcell { border:1px solid #333; border-radius:5px; padding:2px 2px 4px; text-align:center; }
+  .chcell i { display:block; font-style:normal; color:#556; font-size:8px; }
+  .chcell b { font-size:14px; color:#dde; font-weight:600; }
+  .chcell b.long { font-size:10px; }
+  .chcell.entry { border-color:#e8871e; border-width:2px; }
   .chcell.rest { opacity:.35; }
   .chcell.now { background:#1d3a26; border-color:#3c8; }
   #strategy { margin:16px 0 4px; }
@@ -604,6 +605,7 @@ _TEMPLATE = """<!DOCTYPE html>
     <button class="primary" id="play">▶</button>
     <button id="full">▶ 頭から通す</button>
     <button id="chartbtn">🗺 ルート通し</button>
+    <a href="chart.html" target="_blank" style="text-decoration:none"><button>🖨 印刷用マップ</button></a>
     <label style="margin-left:8px">ループ <input type="checkbox" id="loop" checked></label>
     <span id="loopinfo"></span>
     <label style="margin-left:8px">速度 <input type="range" id="rate" min="40" max="100" value="100" style="width:100px">
@@ -892,7 +894,7 @@ D.chart.forEach(c => {
   const long = play.length > 5;
   const sub = c.label && c.label !== play
     ? `<small style="display:block;color:#556;font-size:8.5px">${c.label}</small>` : '';
-  chartHtml += `<div class="chcell${c.rest ? ' rest' : ''}" data-bar="${c.bar}"
+  chartHtml += `<div class="chcell${c.rest ? ' rest' : ''}${c.entry ? ' entry' : ''}" data-bar="${c.bar}"
     onclick="seek(barTime(${c.bar}))" title="クリックでこの小節へ">
     <i>${c.bar}${c.rest ? ' 休' : ''}</i><b${long ? ' class="long"' : ''}>${play}</b>${sub}</div>`;
 });

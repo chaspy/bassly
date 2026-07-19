@@ -32,7 +32,8 @@ uv run bassly show data/songs/polaris --bars 5-12     # 音名+コード表示
 uv run bassly tab data/songs/polaris --bars 5-12      # ASCII TAB (検証用)
 uv run bassly analyze data/songs/polaris --bars 29-32 # 度数+語彙タグ (根拠)
 uv run bassly sheet data/songs/polaris                # レベル2譜面 (output/level2.md)
-uv run bassly practice data/songs/polaris             # 練習ページ (output/practice.html)
+uv run bassly practice data/songs/polaris             # 練習ページ (output/practice.html + 印刷用chart.html)
+uv run bassly chart data/songs/polaris                # 1枚コードマップのみ (スタジオ当日用)
 uv run bassly verify data/songs/polaris --bars 11-12  # 転記と音源の照合 (要ffmpeg)
 uv run bassly verify data/songs/polaris --bars 11-12 --track  # 16分ごとの実測ピッチ
 ```
