@@ -909,6 +909,20 @@ function buildRoll(p) {
 
 // --- スコア: 全フレーズを縦一列に (全体が見える) ----------------------------
 const list = document.getElementById('phraselist');
+// セクション単位ループ: 見出しクリックでそのセクション全体を回す
+const secRange = {};
+D.phrases.forEach(p => {
+  const r = secRange[p.section] || (secRange[p.section] = {start: p.start, end: p.end});
+  r.start = Math.min(r.start, p.start);
+  r.end = Math.max(r.end, p.end);
+});
+function loopRange(a, b) {
+  follow = false;
+  loopStart = barTime(a);
+  loopEnd = barTime(b + 1);
+  document.getElementById('loopinfo').textContent = `🔁 ${a}–${b}`;
+  seek(loopStart);
+}
 let scoreHtml = '';
 // 🎯 作戦: コーチの提案 (analysis/strategy.yaml) + データ由来の事実
 if (D.strategy) {
@@ -943,11 +957,17 @@ let lastSection = null;
 D.phrases.forEach((p, i) => {
   if (p.section !== lastSection) {
     lastSection = p.section;
+    const r = secRange[p.section];
     const s = document.createElement('div');
     s.className = 'sec';
-    s.textContent = p.section;
+    s.textContent = `🔁 ${p.section}`;
+    s.style.cursor = 'pointer';
+    s.title = 'クリックでこのセクション全体をループ';
+    s.onclick = () => loopRange(r.start, r.end);
     list.appendChild(s);
-    scoreHtml += `<div class="sec2">${p.section}</div>`;
+    scoreHtml += `<div class="sec2" onclick="loopRange(${r.start},${r.end})"
+      style="cursor:pointer" title="クリックでこのセクション全体をループ">${p.section}
+      <span style="color:#667;font-weight:normal;font-size:12px">🔁 ${r.start}–${r.end}</span></div>`;
   }
   const c = document.createElement('div');
   c.className = 'card';
