@@ -88,6 +88,20 @@ LESSON_ORDER = [
 ]
 
 
+def load_lyrics(song_dir: Path) -> list[dict]:
+    """歌詞 (data/songs/<slug>/lyrics.yaml)。著作物なので data/ のみに置く。
+
+    形式: lyrics: [{bar: 13, line: "..."}] — bar はその行を歌い始める小節。
+    """
+    import yaml
+
+    path = song_dir / "lyrics.yaml"
+    if not path.exists():
+        return []
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return data.get("lyrics", [])
+
+
 def load_strategy(song_dir: Path) -> dict | None:
     """コーチの作戦 (analysis/strategy.yaml)。ユーザーが自由に編集できる。"""
     import yaml
@@ -165,8 +179,10 @@ def build_payload(
     stems: list[str],
     user: UserProfile | None = None,
     strategy: dict | None = None,
+    lyrics: list[dict] | None = None,
 ) -> dict:
     user = user or UserProfile()
+    lyrics = lyrics or []
     results = analysis.analyze(song, events)
     by_bar: dict[int, list] = {}
     for a in results:
@@ -247,6 +263,11 @@ def build_payload(
                 ],
                 "roll": notes,  # ピアノロール用 (キー "notes" は📝メモで使用済み)
                 "chords16": chords16,
+                "lyrics": [
+                    ly["line"]
+                    for ly in lyrics
+                    if p.start_bar <= ly.get("bar", 0) <= p.end_bar
+                ],
             }
         )
     respell = lambda t: theory.respell_text(t, song.key, song.notation)  # noqa: E731
@@ -630,6 +651,7 @@ _TEMPLATE = """<!DOCTYPE html>
   .summary { font-size:15px; line-height:1.7; background:#1a1a1a; border-left:4px solid #3c8;
              padding:10px 14px; border-radius:6px; margin:8px 0; }
   .notes { color:#bba; font-size:12.5px; margin:6px 0; }
+  .lyr { color:#767268; font-size:11.5px; margin:4px 0 6px; line-height:1.6; }
   details { margin-top:8px; color:#888; }
   details summary { cursor:pointer; font-size:12px; }
   table { border-collapse:collapse; margin-top:8px; }
@@ -1040,6 +1062,7 @@ D.phrases.forEach((p, i) => {
       「${p.role}」 <span style="color:#667">${p.memorization} / ${fmt(barTime(p.start))}</span>${like}</div>
     <div class="summary">${linkify(p.summary, null)}</div>
     ${p.notes ? `<div class="notes">📝 ${linkify(p.notes, null)}</div>` : ''}
+    ${p.lyrics && p.lyrics.length ? `<div class="lyr">🎤 ${p.lyrics.join(' ／ ')}</div>` : ''}
     ${buildRoll(p)}
     <details><summary>ヒント（度数列）— 思い出せない時だけ開く</summary><table>${hint}</table></details>
     ${chips ? `<div>${chips}</div>` : ''}

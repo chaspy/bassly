@@ -189,6 +189,7 @@ def practice(
     payload = practicemod.build_payload(
         song, events, phrases, stems, user=load_user(song_dir),
         strategy=practicemod.load_strategy(song_dir),
+        lyrics=practicemod.load_lyrics(song_dir),
     )
     html = practicemod.render(payload)
     out = out or song_dir / "output" / "practice.html"
