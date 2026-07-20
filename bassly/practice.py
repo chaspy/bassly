@@ -601,6 +601,8 @@ _TEMPLATE = """<!DOCTYPE html>
           border:1px solid #333; font-size:12.5px; }
   .card:hover { background:#1e2a1e; }
   .card.active { background:#1d3a26; border-color:#3c8; }
+  .card.looped { border-color:#c90; background:#1c1810; }
+  .sec.looped { color:#fc8; }
   #transport { position:sticky; top:0; background:#111e; backdrop-filter:blur(4px);
                padding:10px 0 10px; z-index:6; border-bottom:1px solid #333; }
   button { background:#2a2a2a; color:#eee; border:1px solid #444; border-radius:8px;
@@ -935,9 +937,15 @@ function updateLoopVisual() {
   const b = Math.round(loopEnd / spb);
   const whole = loopStart <= 0.01 && b >= D.chart.length - 1;
   D.phrases.forEach((p, i) => {
+    const inLoop = !whole && p.start <= b && p.end >= a;
     const el = document.getElementById('ph' + i);
-    if (el) el.classList.toggle('looped', !whole && p.start <= b && p.end >= a);
+    if (el) el.classList.toggle('looped', inLoop);
+    const card = document.getElementById('card' + i);
+    if (card) card.classList.toggle('looped', inLoop);
   });
+  document.querySelectorAll('#phraselist .sec').forEach(el =>
+    el.classList.toggle('looped',
+      !whole && Number(el.dataset.start) <= b && Number(el.dataset.end) >= a));
   document.querySelectorAll('.rollsvg').forEach(svg => {
     const s = Number(svg.dataset.t0cell) / 16 + 1;
     const e = s + Number(svg.dataset.cells) / 16 - 1;
@@ -988,6 +996,8 @@ D.phrases.forEach((p, i) => {
     s.textContent = `🔁 ${p.section}`;
     s.style.cursor = 'pointer';
     s.title = 'クリックでこのセクション全体をループ';
+    s.dataset.start = r.start;
+    s.dataset.end = r.end;
     s.onclick = () => loopRange(r.start, r.end);
     list.appendChild(s);
     scoreHtml += `<div class="sec2" onclick="loopRange(${r.start},${r.end})"
