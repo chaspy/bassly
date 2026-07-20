@@ -613,7 +613,8 @@ _TEMPLATE = """<!DOCTYPE html>
   .stem.on { background:#1d3a26; border-color:#3c8; }
   #pos { font-variant-numeric:tabular-nums; color:#9c9; margin-left:10px; font-size:13px; }
   #chordnow { color:#fc8; font-size:16px; font-weight:bold; margin-left:10px; }
-  #loopinfo { color:#9c9; font-size:12px; margin-left:6px; }
+  #loopinfo { color:#fc8; font-size:12px; margin-left:6px; cursor:pointer; }
+  #loopinfo:hover { text-decoration:line-through; }
   input[type=range] { vertical-align:middle; }
   .sec2 { color:#8a8; font-weight:bold; margin:30px 0 4px; font-size:16px;
           border-top:1px solid #2a2a2a; padding-top:16px; }
@@ -922,11 +923,26 @@ D.phrases.forEach(p => {
   r.start = Math.min(r.start, p.start);
   r.end = Math.max(r.end, p.end);
 });
+function clearLoop() {
+  loopStart = 0;
+  loopEnd = clockDuration();
+  document.getElementById('loopinfo').textContent = '';
+  updateLoopVisual();
+}
+document.getElementById('loopinfo').onclick = clearLoop;
+document.getElementById('loopinfo').title = 'クリックでループ解除';
+
 function loopRange(a, b) {
+  // 同じ範囲をもう一度クリック = 解除
+  if (Math.abs(loopStart - barTime(a)) < 0.01
+      && Math.abs(loopEnd - barTime(b + 1)) < 0.01) {
+    clearLoop();
+    return;
+  }
   follow = false;
   loopStart = barTime(a);
   loopEnd = barTime(b + 1);
-  document.getElementById('loopinfo').textContent = `🔁 ${a}–${b}`;
+  document.getElementById('loopinfo').textContent = `🔁 ${a}–${b} ✕`;
   seek(loopStart);
   updateLoopVisual();
 }
@@ -1130,7 +1146,7 @@ document.querySelectorAll('.rollsvg').forEach(svg => {
     loopStart = t0 * spb16;
     loopEnd = (t0 + cells) * spb16;
     document.getElementById('loopinfo').textContent =
-      `🔁 bar ${t0/16 + 1}–${(t0 + cells)/16}`;
+      `🔁 bar ${t0/16 + 1}–${(t0 + cells)/16} ✕`;
     seek(loopStart);
     updateLoopVisual();
   };
@@ -1164,7 +1180,7 @@ function select(i) {
   const p = D.phrases[i];
   loopStart = barTime(p.start);
   loopEnd = barTime(p.end + 1);
-  document.getElementById('loopinfo').textContent = `🔁 ${p.start}–${p.end}`;
+  document.getElementById('loopinfo').textContent = `🔁 ${p.start}–${p.end} ✕`;
   seek(loopStart);
   updateLoopVisual();
   const block = document.getElementById('ph' + i);
