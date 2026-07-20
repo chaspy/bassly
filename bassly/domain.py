@@ -108,3 +108,6 @@ class Song(BaseModel):
     sections: list[Section] = []
     chords: list[ChordEvent] = []
     sources: list[SourceRef] = []
+    # 演奏者クレジット (例: {bass: やまもとひかる})。将来のプレイヤー軸
+    # (手癖の曲横断検出・次にコピーする曲の推薦) の土台
+    credits: dict[str, str] = {}
