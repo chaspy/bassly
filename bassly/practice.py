@@ -617,7 +617,10 @@ _TEMPLATE = """<!DOCTYPE html>
           border-top:1px solid #2a2a2a; padding-top:16px; }
   .phrase { margin:14px 0 24px; padding-left:10px; margin-left:-13px;
             border-left:3px solid transparent; scroll-margin-top:110px; }
+  .phrase.looped { background:#16130c; border-left-color:#c90; border-radius:6px; }
   .phrase.active { border-left-color:#3c8; }
+  .rollsvg.looped { outline:1.5px solid #c90; }
+  .chcell.loopon { border-color:#c90; }
   .phead { cursor:pointer; color:#9c9; font-size:14px; margin-bottom:6px; }
   .phead:hover { color:#cfc; }
   .like { color:#fc8; font-size:12px; margin-left:8px; }
@@ -787,6 +790,7 @@ document.getElementById('full').onclick = () => {
   document.getElementById('loopinfo').textContent = '🔁 通し';
   seek(0);
   playAll();
+  updateLoopVisual();
 };
 document.getElementById('rate').oninput = e => {
   const r = e.target.value / 100;
@@ -922,6 +926,27 @@ function loopRange(a, b) {
   loopEnd = barTime(b + 1);
   document.getElementById('loopinfo').textContent = `🔁 ${a}–${b}`;
   seek(loopStart);
+  updateLoopVisual();
+}
+
+// いまのループ範囲を見た目で示す (フレーズ背景・ロール枠・チャートのマス)
+function updateLoopVisual() {
+  const a = Math.round(loopStart / spb) + 1;
+  const b = Math.round(loopEnd / spb);
+  const whole = loopStart <= 0.01 && b >= D.chart.length - 1;
+  D.phrases.forEach((p, i) => {
+    const el = document.getElementById('ph' + i);
+    if (el) el.classList.toggle('looped', !whole && p.start <= b && p.end >= a);
+  });
+  document.querySelectorAll('.rollsvg').forEach(svg => {
+    const s = Number(svg.dataset.t0cell) / 16 + 1;
+    const e = s + Number(svg.dataset.cells) / 16 - 1;
+    svg.classList.toggle('looped', !whole && s <= b && e >= a);
+  });
+  document.querySelectorAll('.chcell').forEach(el => {
+    const bar = Number(el.dataset.bar);
+    el.classList.toggle('loopon', !whole && bar >= a && bar <= b);
+  });
 }
 let scoreHtml = '';
 // 🎯 作戦: コーチの提案 (analysis/strategy.yaml) + データ由来の事実
@@ -1097,6 +1122,7 @@ document.querySelectorAll('.rollsvg').forEach(svg => {
     document.getElementById('loopinfo').textContent =
       `🔁 bar ${t0/16 + 1}–${(t0 + cells)/16}`;
     seek(loopStart);
+    updateLoopVisual();
   };
 });
 
@@ -1130,6 +1156,7 @@ function select(i) {
   loopEnd = barTime(p.end + 1);
   document.getElementById('loopinfo').textContent = `🔁 ${p.start}–${p.end}`;
   seek(loopStart);
+  updateLoopVisual();
   const block = document.getElementById('ph' + i);
   if (block) block.scrollIntoView({block: 'start', behavior: 'smooth'});
 }
